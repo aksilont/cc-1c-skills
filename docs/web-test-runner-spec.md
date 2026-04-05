@@ -784,6 +784,6 @@ function buildContext({ noRecord = false } = {}) -> object
 | 5 | Хуки (prepare/cleanup + before/after) | run.mjs: поддержка _hooks.mjs | #3 | done 2026-04-05 |
 | 6 | Файл конфигурации + контексты | run.mjs: webtest.config.mjs, BrowserContext'ы, маршрутизация | #3 | config done, BrowserContext pending |
 | 7 | Форматы отчётов (Allure, JUnit) | run.mjs: --format=allure/junit | #3 | -- |
-| 8 | Синтетическая конфигурация | integration/build-webtest-config.test.mjs | спека | -- |
+| 8 | Синтетическая конфигурация | integration/build-webtest-config.test.mjs | спека | done 2026-04-05 |
 | 9 | Smoke-тесты (01-06) | tests/web-test/01-06*.test.mjs | #3, #8 | -- |
 | 10 | Остальные тесты (07-13) | tests/web-test/07-13*.test.mjs | #9 | -- |
