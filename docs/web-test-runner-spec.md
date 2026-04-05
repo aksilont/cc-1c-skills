@@ -775,15 +775,15 @@ function buildContext({ noRecord = false } = {}) -> object
 
 ## 17. Дорожная карта реализации
 
-| # | Задача | Результат | Зависимости |
-|---|--------|-----------|-------------|
-| 1 | Архитектурная спецификация | `docs/web-test-runner-spec.md` (этот файл) | -- |
-| 2 | Рефакторинг buildContext() | run.mjs: извлечение из executeScript | спека |
-| 3 | Ядро cmdTest() | run.mjs: обнаружение, импорт, выполнение, консольный вывод, JSON-отчёт | #2 |
-| 4 | Утверждения + обёртка step() | run.mjs: assert.*, step(name, fn) | #3 |
-| 5 | Хуки (prepare/cleanup + before/after) | run.mjs: поддержка _hooks.mjs | #3 |
-| 6 | Файл конфигурации + контексты | run.mjs: webtest.config.mjs, BrowserContext'ы, маршрутизация | #3 |
-| 7 | Форматы отчётов (Allure, JUnit) | run.mjs: --format=allure/junit | #3 |
-| 8 | Синтетическая конфигурация | integration/build-webtest-config.test.mjs | спека |
-| 9 | Smoke-тесты (01-06) | tests/web-test/01-06*.test.mjs | #3, #8 |
-| 10 | Остальные тесты (07-13) | tests/web-test/07-13*.test.mjs | #9 |
+| # | Задача | Результат | Зависимости | Статус |
+|---|--------|-----------|-------------|--------|
+| 1 | Архитектурная спецификация | `docs/web-test-runner-spec.md` (этот файл) | -- | done 2026-04-05 |
+| 2 | Рефакторинг buildContext() | run.mjs: извлечение из executeScript | спека | done 2026-04-05 |
+| 3 | Ядро cmdTest() | run.mjs: обнаружение, импорт, выполнение, консольный вывод, JSON-отчёт | #2 | done 2026-04-05 |
+| 4 | Утверждения + обёртка step() | run.mjs: assert.*, step(name, fn) | #3 | done 2026-04-05 |
+| 5 | Хуки (prepare/cleanup + before/after) | run.mjs: поддержка _hooks.mjs | #3 | done 2026-04-05 |
+| 6 | Файл конфигурации + контексты | run.mjs: webtest.config.mjs, BrowserContext'ы, маршрутизация | #3 | config done, BrowserContext pending |
+| 7 | Форматы отчётов (Allure, JUnit) | run.mjs: --format=allure/junit | #3 | -- |
+| 8 | Синтетическая конфигурация | integration/build-webtest-config.test.mjs | спека | -- |
+| 9 | Smoke-тесты (01-06) | tests/web-test/01-06*.test.mjs | #3, #8 | -- |
+| 10 | Остальные тесты (07-13) | tests/web-test/07-13*.test.mjs | #9 | -- |
