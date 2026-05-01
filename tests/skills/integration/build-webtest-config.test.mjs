@@ -30,6 +30,7 @@ export const steps = [
         { name: 'ИНН', type: 'String', length: 12 },
         { name: 'Телефон', type: 'String', length: 20 },
         { name: 'Адрес', type: 'String', length: 200 },
+        { name: 'КодКПП', type: 'String', length: 9 },
       ],
     },
     args: { '-JsonPath': '{inputFile}', '-OutputDir': '{workDir}' },
@@ -191,6 +192,36 @@ export const steps = [
     validate: { script: 'form-validate/scripts/form-validate', flag: '-FormPath', path: 'Catalogs/Контрагенты/Forms/ФормаЭлемента/Ext/Form.xml' },
   },
 
+  // Форма списка Контрагенты — для filterList тестов. КодКПП НЕ выводим
+  // в форму — это покрывает FieldSelector DLB ветку (filterList #5)
+  {
+    name: 'form-add: Форма списка Контрагенты',
+    script: 'form-add/scripts/form-add',
+    args: { '-ObjectPath': '{workDir}/Catalogs/Контрагенты.xml', '-FormName': 'ФормаСписка', '-Purpose': 'List' },
+  },
+  {
+    name: 'form-compile: Форма списка Контрагенты',
+    script: 'form-compile/scripts/form-compile',
+    input: {
+      title: 'Контрагенты',
+      attributes: [
+        { name: 'Список', type: 'DynamicList', main: true,
+          settings: { mainTable: 'Catalog.Контрагенты', dynamicDataRead: true } },
+      ],
+      elements: [
+        { table: 'Список', path: 'Список', columns: [
+          { input: 'Code', path: 'Список.Code', title: 'Код' },
+          { input: 'Description', path: 'Список.Description', title: 'Наименование' },
+          { input: 'ИНН', path: 'Список.ИНН', title: 'ИНН' },
+          { input: 'Телефон', path: 'Список.Телефон', title: 'Телефон' },
+          { input: 'Адрес', path: 'Список.Адрес', title: 'Адрес' },
+        ]},
+      ],
+    },
+    args: { '-JsonPath': '{inputFile}', '-OutputPath': '{workDir}/Catalogs/Контрагенты/Forms/ФормаСписка/Ext/Form.xml' },
+    validate: { script: 'form-validate/scripts/form-validate', flag: '-FormPath', path: 'Catalogs/Контрагенты/Forms/ФормаСписка/Ext/Form.xml' },
+  },
+
   // Форма элемента Номенклатура — 2 вкладки, все типы полей
   {
     name: 'form-add: Форма элемента Номенклатура',
@@ -227,6 +258,37 @@ export const steps = [
     validate: { script: 'form-validate/scripts/form-validate', flag: '-FormPath', path: 'Catalogs/Номенклатура/Forms/ФормаЭлемента/Ext/Form.xml' },
   },
 
+  // Форма списка Номенклатура — с колонкой ДатаПоступления для filterList #6 (date pattern)
+  {
+    name: 'form-add: Форма списка Номенклатура',
+    script: 'form-add/scripts/form-add',
+    args: { '-ObjectPath': '{workDir}/Catalogs/Номенклатура.xml', '-FormName': 'ФормаСписка', '-Purpose': 'List' },
+  },
+  {
+    name: 'form-compile: Форма списка Номенклатура',
+    script: 'form-compile/scripts/form-compile',
+    input: {
+      title: 'Номенклатура',
+      attributes: [
+        { name: 'Список', type: 'DynamicList', main: true,
+          settings: { mainTable: 'Catalog.Номенклатура', dynamicDataRead: true } },
+      ],
+      elements: [
+        { table: 'Список', path: 'Список', columns: [
+          { input: 'Code', path: 'Список.Code', title: 'Код' },
+          { input: 'Description', path: 'Список.Description', title: 'Наименование' },
+          { input: 'Артикул', path: 'Список.Артикул', title: 'Артикул' },
+          { input: 'ВидНоменклатуры', path: 'Список.ВидНоменклатуры', title: 'Вид номенклатуры' },
+          { input: 'ДатаПоступления', path: 'Список.ДатаПоступления', title: 'Дата поступления' },
+          { input: 'Цена', path: 'Список.Цена', title: 'Цена' },
+          { input: 'Активен', path: 'Список.Активен', title: 'Активен' },
+        ]},
+      ],
+    },
+    args: { '-JsonPath': '{inputFile}', '-OutputPath': '{workDir}/Catalogs/Номенклатура/Forms/ФормаСписка/Ext/Form.xml' },
+    validate: { script: 'form-validate/scripts/form-validate', flag: '-FormPath', path: 'Catalogs/Номенклатура/Forms/ФормаСписка/Ext/Form.xml' },
+  },
+
   // Форма документа ПриходнаяНакладная
   {
     name: 'form-add: Форма документа ПриходнаяНакладная',
@@ -256,6 +318,34 @@ export const steps = [
     },
     args: { '-JsonPath': '{inputFile}', '-OutputPath': '{workDir}/Documents/ПриходнаяНакладная/Forms/ФормаДокумента/Ext/Form.xml' },
     validate: { script: 'form-validate/scripts/form-validate', flag: '-FormPath', path: 'Documents/ПриходнаяНакладная/Forms/ФормаДокумента/Ext/Form.xml' },
+  },
+
+  // Форма списка ПриходнаяНакладная — с колонкой Контрагент для filterList #7 (reference pattern)
+  {
+    name: 'form-add: Форма списка ПриходнаяНакладная',
+    script: 'form-add/scripts/form-add',
+    args: { '-ObjectPath': '{workDir}/Documents/ПриходнаяНакладная.xml', '-FormName': 'ФормаСписка', '-Purpose': 'List' },
+  },
+  {
+    name: 'form-compile: Форма списка ПриходнаяНакладная',
+    script: 'form-compile/scripts/form-compile',
+    input: {
+      title: 'Приходные накладные',
+      attributes: [
+        { name: 'Список', type: 'DynamicList', main: true,
+          settings: { mainTable: 'Document.ПриходнаяНакладная', dynamicDataRead: true } },
+      ],
+      elements: [
+        { table: 'Список', path: 'Список', columns: [
+          { input: 'Date', path: 'Список.Date', title: 'Дата' },
+          { input: 'Number', path: 'Список.Number', title: 'Номер' },
+          { input: 'Контрагент', path: 'Список.Контрагент', title: 'Контрагент' },
+          { input: 'Posted', path: 'Список.Posted', title: 'Проведён' },
+        ]},
+      ],
+    },
+    args: { '-JsonPath': '{inputFile}', '-OutputPath': '{workDir}/Documents/ПриходнаяНакладная/Forms/ФормаСписка/Ext/Form.xml' },
+    validate: { script: 'form-validate/scripts/form-validate', flag: '-FormPath', path: 'Documents/ПриходнаяНакладная/Forms/ФормаСписка/Ext/Form.xml' },
   },
 
   // ── 4. DCS for report ──
