@@ -1,4 +1,4 @@
-// web-test browser v1.7 — Playwright browser management for 1C web client
+// web-test browser v1.9 — Playwright browser management for 1C web client
 // Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 /**
  * Playwright browser management for 1C web client.
@@ -972,36 +972,32 @@ export async function readTable({ maxRows = 20, offset = 0, table } = {}) {
  * where frameIndex is the Playwright frames[] index (1-based, 0 = main).
  */
 async function scanSpreadsheetCells(formNum) {
-  const iframeIndices = await page.evaluate(`(() => {
-    const prefix = 'form${formNum ?? 0}_';
-    const allIframes = [...document.querySelectorAll('iframe')];
-    const indices = [];
-    for (let i = 0; i < allIframes.length; i++) {
-      const f = allIframes[i];
-      if (f.offsetWidth < 100) continue;
-      let el = f.parentElement, found = false;
-      for (let d = 0; el && d < 30; d++, el = el.parentElement) {
-        if (el.id && el.id.startsWith(prefix)) { found = true; break; }
-      }
-      if (found) indices.push(i);
-    }
-    return indices;
-  })()`);
+  const prefix = `form${formNum ?? 0}_`;
+  const iframeHandles = await page.$$('iframe');
 
-  const frames = page.frames();
   const allCells = new Map();
-  const frameMap = new Map(); // key 'r_c' → Playwright frame index
+  const frameMap = new Map(); // key 'r_c' → Playwright Frame object
 
-  for (const iframeIdx of iframeIndices) {
-    const frameIndex = iframeIdx + 1;
-    const frame = frames[frameIndex];
+  for (const handle of iframeHandles) {
+    const ok = await handle.evaluate((f, pfx) => {
+      if (f.offsetWidth < 100) return false;
+      let el = f.parentElement;
+      for (let d = 0; el && d < 30; d++, el = el.parentElement) {
+        if (el.id && el.id.startsWith(pfx)) return true;
+      }
+      return false;
+    }, prefix);
+    if (!ok) continue;
+
+    const frame = await handle.contentFrame();
     if (!frame) continue;
+
     try {
       const cells = await frame.evaluate(`(() => {
         const cells = [];
         document.querySelectorAll('div[x]').forEach(d => {
           const span = d.querySelector('span');
-          const text = span?.textContent?.trim() || '';
+          const text = span?.innerText?.replace(/\\n/g, ' ')?.trim() || '';
           if (!text) return;
           const rowDiv = d.parentElement;
           const row = rowDiv?.getAttribute('y') || rowDiv?.className?.match(/R(\\d+)/)?.[1] || null;
@@ -1014,7 +1010,7 @@ async function scanSpreadsheetCells(formNum) {
         const key = `${cell.r}_${cell.c}`;
         if (!allCells.has(key) || cell.t.length > allCells.get(key).t.length) {
           allCells.set(key, cell);
-          frameMap.set(key, frameIndex);
+          frameMap.set(key, frame);
         }
       }
     } catch { /* skip inaccessible frames */ }
@@ -1044,81 +1040,168 @@ function buildSpreadsheetMapping(allCells) {
     return arr;
   });
 
-  const hasNumber = (row) => row.some(c => /^[\d\s\u00a0]/.test(c) && /\d/.test(c));
+  // Generic numeric check: digits with optional spaces/commas, excludes codes like "68/78"
+  // Accepts bare integers (e.g. account codes "50", "84") — used for hasNumber / totals classification.
+  const isNumericVal = (c) => {
+    if (!c || !/\d/.test(c)) return false;
+    const s = c.replace(/^[-\s\u00a0]+/, '').replace(/[\s\u00a0]/g, '');
+    return /^\d[\d,]*$/.test(s);
+  };
+  // Data-formatted numeric value: requires a formatting signal (grouping space, decimal comma, or leading minus).
+  // Used as the anchor for first data row — avoids false positives on bare account codes like "50", "51".
+  const isDataNumericVal = (c) => {
+    if (!isNumericVal(c)) return false;
+    return /[\s\u00a0,]/.test(c) || /^-/.test(c);
+  };
+  const hasNumber = (row) => row.some(c => isNumericVal(c));
   const nonEmpty = (row) => row.filter(c => c !== '').length;
 
-  // Find first data row (first row with numbers)
+  // Build a rich mapping (group/super/DCS) anchored at a known detailIdx + firstDataIdx.
+  // Shared by Level 1 (DCS-code anchor) and Level 2 (formatted-number anchor).
+  const buildRichMapping = (detailIdx, firstDataIdx) => {
+    let groupIdx = -1;
+    if (detailIdx > 0 && nonEmpty(rows[detailIdx - 1]) >= 2) groupIdx = detailIdx - 1;
+
+    const detailRow = rows[detailIdx];
+    const groupRow = groupIdx >= 0 ? rows[groupIdx] : null;
+
+    // Detect optional third header level above group row (bounds carry-forward)
+    let superRow = null;
+    if (groupIdx > 0 && nonEmpty(rows[groupIdx - 1]) >= 2) {
+      superRow = rows[groupIdx - 1];
+    }
+
+    // Build column names (group + detail merge)
+    const groupFilled = new Array(maxCol + 1).fill('');
+    if (groupRow) {
+      let cur = '';
+      for (let c = 0; c <= maxCol; c++) {
+        if (groupRow[c]) {
+          cur = groupRow[c];
+        } else if (superRow && superRow[c]) {
+          // New top-level header starts here — stop carry-forward
+          cur = '';
+        }
+        groupFilled[c] = cur;
+      }
+    }
+
+    const detailCounts = {};
+    for (let c = 0; c <= maxCol; c++) {
+      const n = detailRow[c];
+      if (n) detailCounts[n] = (detailCounts[n] || 0) + 1;
+    }
+
+    // Detect DCS column codes (К1, К2, ...) — always prefix with group when present
+    const detailNonEmpty = detailRow.filter(c => c);
+    const isDcsCodeRow = detailNonEmpty.length >= 2 && detailNonEmpty.every(c => /^К\d+$/.test(c));
+
+    const colNames = [];
+    for (let c = 0; c <= maxCol; c++) {
+      const detail = detailRow[c];
+      const group = groupFilled[c];
+      const sup = superRow ? superRow[c] : '';
+      if (detail) {
+        // Prefer group prefix; fall back to superRow for DCS code columns without sub-group
+        const prefix = group && group !== detail ? group : (isDcsCodeRow && sup ? sup : '');
+        const needPrefix = prefix && (isDcsCodeRow || detailCounts[detail] > 1 || (groupRow && groupRow[c] === ''));
+        colNames.push(needPrefix ? `${prefix} / ${detail}` : detail);
+      } else if (group) {
+        colNames.push(group);
+      } else if (sup) {
+        colNames.push(sup);
+      } else {
+        colNames.push(null);
+      }
+    }
+
+    const colMap = new Map();
+    for (let c = 0; c < colNames.length; c++) {
+      if (colNames[c]) colMap.set(colNames[c], c);
+    }
+
+    // Classify data rows: separate data indices and totals index
+    const dataRowIndices = [];
+    let totalsRowIdx = -1;
+    for (let i = firstDataIdx; i < rows.length; i++) {
+      if (!hasNumber(rows[i]) && nonEmpty(rows[i]) === 0) continue;
+      const first = rows[i][0]?.trim().toLowerCase();
+      if (first === 'итого' || first === 'всего') {
+        totalsRowIdx = i;
+      } else {
+        dataRowIndices.push(i);
+      }
+    }
+
+    const superRowIdx = superRow ? groupIdx - 1 : -1;
+
+    return {
+      rows, sortedRows, maxCol, colNames, colMap,
+      headerRowIdx: detailIdx, groupRowIdx: groupIdx, superRowIdx,
+      dataStartIdx: firstDataIdx, dataRowIndices, totalsRowIdx,
+      rowMap, hasNumber, nonEmpty,
+    };
+  };
+
+  // --- Level 1: DCS-code row anchor ---
+  // ФСД / СКД-отчёты всегда содержат строку "К1, К2, ..." — rock-solid structural marker.
+  // Якорение через неё — детерминированное, работает даже если все данные — голые целые (отчёт в "тыс.руб").
+  for (let i = 0; i < rows.length; i++) {
+    const detailNonEmpty = rows[i].filter(c => c);
+    if (detailNonEmpty.length >= 2 && detailNonEmpty.every(c => /^К\d+$/.test(c))) {
+      // Find first non-empty row after the К-codes row as data start
+      let firstDataIdx = rows.length;
+      for (let j = i + 1; j < rows.length; j++) {
+        if (nonEmpty(rows[j]) > 0) { firstDataIdx = j; break; }
+      }
+      return buildRichMapping(i, firstDataIdx);
+    }
+  }
+
+  // --- Level 2: formatted-number anchor (heuristic for reports without DCS codes) ---
   let firstDataIdx = rows.length;
   for (let i = 0; i < rows.length; i++) {
-    if (hasNumber(rows[i])) { firstDataIdx = i; break; }
+    if (rows[i].filter(c => isDataNumericVal(c)).length >= 2) { firstDataIdx = i; break; }
   }
-
-  // Find header rows
-  let detailIdx = -1;
-  for (let i = firstDataIdx - 1; i >= 0; i--) {
-    if (nonEmpty(rows[i]) >= Math.min(3, maxCol + 1)) { detailIdx = i; break; }
-  }
-  if (detailIdx === -1) return null; // no headers detected
-
-  let groupIdx = -1;
-  if (detailIdx > 0 && nonEmpty(rows[detailIdx - 1]) >= 2) groupIdx = detailIdx - 1;
-
-  const detailRow = rows[detailIdx];
-  const groupRow = groupIdx >= 0 ? rows[groupIdx] : null;
-
-  // Detect optional third header level above group row (bounds carry-forward)
-  let superRow = null;
-  if (groupIdx > 0 && nonEmpty(rows[groupIdx - 1]) >= 2) {
-    superRow = rows[groupIdx - 1];
-  }
-
-  // Build column names (group + detail merge)
-  const groupFilled = new Array(maxCol + 1).fill('');
-  if (groupRow) {
-    let cur = '';
-    for (let c = 0; c <= maxCol; c++) {
-      if (groupRow[c]) {
-        cur = groupRow[c];
-      } else if (superRow && superRow[c]) {
-        // New top-level header starts here — stop carry-forward
-        cur = '';
-      }
-      groupFilled[c] = cur;
+  if (firstDataIdx === rows.length) {
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i].some(c => isDataNumericVal(c))) { firstDataIdx = i; break; }
     }
   }
 
-  const detailCounts = {};
-  for (let c = 0; c <= maxCol; c++) {
-    const n = detailRow[c];
-    if (n) detailCounts[n] = (detailCounts[n] || 0) + 1;
+  if (firstDataIdx < rows.length) {
+    let detailIdx = -1;
+    for (let i = firstDataIdx - 1; i >= 0; i--) {
+      if (nonEmpty(rows[i]) >= Math.min(3, maxCol + 1)) { detailIdx = i; break; }
+    }
+    if (detailIdx !== -1) return buildRichMapping(detailIdx, firstDataIdx);
   }
 
+  // --- Level 3: single-row header fallback (text-only data, query console) ---
+  // First "wide" row (nonEmpty >= 2) = headers, rest = data. No multi-level composition.
+  let headerIdx = -1;
+  for (let i = 0; i < rows.length; i++) {
+    if (nonEmpty(rows[i]) >= 2) { headerIdx = i; break; }
+  }
+  // Single-column tables: accept nonEmpty >= 1
+  if (headerIdx === -1 && maxCol === 0) {
+    for (let i = 0; i < rows.length; i++) {
+      if (nonEmpty(rows[i]) >= 1) { headerIdx = i; break; }
+    }
+  }
+  if (headerIdx === -1) return null; // truly empty — top-level fallback to { rows, total }
+
+  const detailRow = rows[headerIdx];
   const colNames = [];
-  for (let c = 0; c <= maxCol; c++) {
-    const detail = detailRow[c];
-    const group = groupFilled[c];
-    if (detail) {
-      const needPrefix = group && group !== detail && (detailCounts[detail] > 1 || (groupRow && groupRow[c] === ''));
-      colNames.push(needPrefix ? `${group} / ${detail}` : detail);
-    } else if (group) {
-      colNames.push(group);
-    } else if (superRow && superRow[c]) {
-      colNames.push(superRow[c]);
-    } else {
-      colNames.push(null);
-    }
-  }
-
-  // Column name → physical column index
+  for (let c = 0; c <= maxCol; c++) colNames.push(detailRow[c] || null);
   const colMap = new Map();
   for (let c = 0; c < colNames.length; c++) {
     if (colNames[c]) colMap.set(colNames[c], c);
   }
 
-  // Classify data rows: separate data indices and totals index
-  const dataRowIndices = []; // indices into rows[] array
+  const dataRowIndices = [];
   let totalsRowIdx = -1;
-  for (let i = firstDataIdx; i < rows.length; i++) {
+  for (let i = headerIdx + 1; i < rows.length; i++) {
     if (!hasNumber(rows[i]) && nonEmpty(rows[i]) === 0) continue;
     const first = rows[i][0]?.trim().toLowerCase();
     if (first === 'итого' || first === 'всего') {
@@ -1130,8 +1213,8 @@ function buildSpreadsheetMapping(allCells) {
 
   return {
     rows, sortedRows, maxCol, colNames, colMap,
-    headerRowIdx: detailIdx, groupRowIdx: groupIdx,
-    dataStartIdx: firstDataIdx, dataRowIndices, totalsRowIdx,
+    headerRowIdx: headerIdx, groupRowIdx: -1, superRowIdx: -1,
+    dataStartIdx: headerIdx + 1, dataRowIndices, totalsRowIdx,
     rowMap, hasNumber, nonEmpty,
   };
 }
@@ -1244,11 +1327,14 @@ async function clickSpreadsheetCell(target, { dblclick: dbl, modifier } = {}) {
 
   const { rows, sortedRows, colNames, colMap, dataRowIndices, totalsRowIdx } = mapping;
 
-  // Resolve column
-  const colName = target.column;
+  // Resolve column (exact → endsWith " / X" → includes)
+  let colName = target.column;
   if (!colMap.has(colName)) {
     const available = colNames.filter(n => n);
-    throw new Error(`clickElement: column "${colName}" not found. Available: ${available.join(', ')}`);
+    const suffix = ' / ' + colName;
+    const match = available.find(n => n.endsWith(suffix)) || available.find(n => n.includes(colName));
+    if (!match) throw new Error(`clickElement: column "${colName}" not found. Available: ${available.join(', ')}`);
+    colName = match;
   }
   const physCol = colMap.get(colName);
 
@@ -1265,9 +1351,16 @@ async function clickSpreadsheetCell(target, { dblclick: dbl, modifier } = {}) {
     // Filter: { colName: value } — find first data row where column matches
     const filterEntries = Object.entries(row);
     const norm = s => s?.replace(/\u00a0/g, ' ').trim().toLowerCase() || '';
+    const resolveCol = (name) => {
+      if (colMap.has(name)) return colMap.get(name);
+      const suffix = ' / ' + name;
+      const available = colNames.filter(n => n);
+      const m = available.find(n => n.endsWith(suffix)) || available.find(n => n.includes(name));
+      return m ? colMap.get(m) : null;
+    };
     rowIdx = dataRowIndices.find(i => {
       return filterEntries.every(([fCol, fVal]) => {
-        const fColIdx = colMap.get(fCol);
+        const fColIdx = resolveCol(fCol);
         if (fColIdx == null) return false;
         const cellText = norm(rows[i][fColIdx]);
         const search = norm(fVal);
@@ -1282,14 +1375,11 @@ async function clickSpreadsheetCell(target, { dblclick: dbl, modifier } = {}) {
   // Map rows[] index → physical row number
   const physRow = sortedRows[rowIdx];
   const cellKey = `${physRow}_${physCol}`;
-  const frameIndex = frameMap.get(cellKey);
-  if (!frameIndex) {
+  const frame = frameMap.get(cellKey);
+  if (!frame) {
     // Cell exists in mapping but might be empty — try clicking anyway
     throw new Error(`clickElement: cell at row=${JSON.stringify(target.row)}, column="${colName}" is empty or not rendered.`);
   }
-
-  // Get bounding box and click via page.mouse (bypasses mxlCurrBody overlay)
-  const frame = page.frames()[frameIndex];
   // Use [y]+[x] attributes — CSS class RxCy uses different numbering than y/x attrs.
   const cellDiv = frame.locator(`div[y="${physRow}"] div[x="${physCol}"]`).first();
   // Scroll cell into view using arrow keys — the only reliable way to scroll
@@ -1338,17 +1428,16 @@ async function findSpreadsheetCellByText(formNum, searchText) {
   }
   if (!found) return null;
 
-  const frameIndex = frameMap.get(found.key);
-  if (!frameIndex) return null;
+  const frame = frameMap.get(found.key);
+  if (!frame) return null;
 
-  const frame = page.frames()[frameIndex];
   // Scroll cell into view using native arrow-key mechanism
   const cellDiv = frame.locator(`div[y="${found.cell.r}"] div[x="${found.cell.c}"]`).first();
   await scrollSpreadsheetToCell(frame, found.cell.r, found.cell.c, cellDiv);
   const box = await cellDiv.boundingBox();
   if (!box) return null;
 
-  return { frameIndex, physRow: found.cell.r, physCol: found.cell.c, text: found.cell.t, box };
+  return { frame, physRow: found.cell.r, physCol: found.cell.c, text: found.cell.t, box };
 }
 
 /**
@@ -1366,7 +1455,12 @@ export async function readSpreadsheet() {
 
   const { allCells } = await scanSpreadsheetCells(formNum);
 
-  if (allCells.size === 0) throw new Error('readSpreadsheet: no SpreadsheetDocument found. Report may not be generated yet.');
+  if (allCells.size === 0) {
+    // Check for state window messages (info bar) that explain why the report is empty
+    const err = await checkForErrors();
+    const hint = err?.stateText?.length ? err.stateText.join('; ') : '';
+    throw new Error('readSpreadsheet: no SpreadsheetDocument found.' + (hint ? ' State: ' + hint : ' Report may not be generated yet.'));
+  }
 
   const mapping = buildSpreadsheetMapping(allCells);
   if (!mapping) {
@@ -1388,7 +1482,7 @@ export async function readSpreadsheet() {
     return { rows, total: rows.length };
   }
 
-  const { rows, colNames, dataStartIdx, maxCol, groupRowIdx, headerRowIdx, hasNumber, nonEmpty } = mapping;
+  const { rows, colNames, dataStartIdx, maxCol, groupRowIdx, headerRowIdx, superRowIdx, hasNumber, nonEmpty } = mapping;
 
   // Convert data rows to objects
   const data = [];
@@ -1411,8 +1505,8 @@ export async function readSpreadsheet() {
     }
   }
 
-  // Meta: title, params, filters from rows before header
-  const metaEnd = groupRowIdx >= 0 ? groupRowIdx : headerRowIdx;
+  // Meta: title, params, filters from rows before header (superRow is part of header, not meta)
+  const metaEnd = superRowIdx >= 0 ? superRowIdx : (groupRowIdx >= 0 ? groupRowIdx : headerRowIdx);
   let title = '';
   const meta = [];
   for (let i = 0; i < metaEnd; i++) {
@@ -1458,8 +1552,10 @@ async function scanGridRows(formNum, searchLower) {
       sel = lines[0]; // empty search → first row
     }
     if (!sel) return null;
+    const imgBox = sel.querySelector('.gridBoxImg');
+    const isGroup = imgBox ? !!imgBox.querySelector('.gridListH') : false;
     const r = sel.getBoundingClientRect();
-    return { rowCount: lines.length, x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+    return { rowCount: lines.length, x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2), isGroup };
   })()`);
 }
 
@@ -1581,8 +1677,8 @@ async function advancedSearchInline(formNum, text) {
  *
  * Strategy (escalating):
  *   1. Scan visible rows for text match (exact → startsWith → includes)
- *   2. Simple search (search input + Enter) → re-scan
- *   3. Advanced search (Alt+F, "по части строки") → re-scan
+ *   2. Advanced search (Alt+F, "по части строки") → re-scan
+ *   3. Fallback: simple search (search input + Enter) → re-scan
  *   4. Not found → Escape → error
  *
  * For object search {field: value}: steps 1, then filterList(val, {field}) per entry, then re-scan.
@@ -1604,7 +1700,7 @@ async function pickFromSelectionForm(selFormNum, fieldName, search, origFormNum)
   async function trySelect(row) {
     const r = await dblclickAndVerify(row, selFormNum, fieldName);
     if (r.ok) return r;
-    hadUnselectableMatch = true; // found match but couldn't select (group row)
+    hadUnselectableMatch = true; // found match but couldn't select (possibly group row or overlay)
     return null; // form still open, try next step
   }
 
@@ -1617,7 +1713,25 @@ async function pickFromSelectionForm(selFormNum, fieldName, search, origFormNum)
     }
   }
 
-  // Step 2: Simple search via search input (directly on the known form, avoids filterList form-detection)
+  // Step 2: Advanced search (Alt+F — fast, no overlay issues)
+  if (typeof search === 'object' && search) {
+    // Per-field advanced search via filterList(val, {field})
+    for (const [fld, val] of Object.entries(search)) {
+      try { await filterList(String(val), { field: fld }); } catch { /* proceed */ }
+    }
+  } else if (searchLower) {
+    // Inline advanced search (Alt+F, "по части строки")
+    await advancedSearchInline(selFormNum, searchText);
+  }
+  if (searchLower) {
+    const row = await scanGridRows(selFormNum, searchLower);
+    if (row?.x) {
+      const r = await trySelect(row);
+      if (r) return r;
+    }
+  }
+
+  // Step 3: Fallback — simple search via search input (for forms without Alt+F support)
   if (typeof search === 'string' && searchLower) {
     const searchInputId = await page.evaluate(`(() => {
       const p = 'form${selFormNum}_';
@@ -1635,30 +1749,12 @@ async function pickFromSelectionForm(selFormNum, fieldName, search, origFormNum)
         await page.waitForTimeout(300);
         await page.keyboard.press('Enter');
         await waitForStable(selFormNum);
-      } catch { /* proceed to advanced search */ }
+      } catch { /* proceed */ }
       const row = await scanGridRows(selFormNum, searchLower);
       if (row?.x) {
         const r = await trySelect(row);
         if (r) return r;
       }
-    }
-  }
-
-  // Step 3: Advanced search
-  if (typeof search === 'object' && search) {
-    // Per-field advanced search via filterList(val, {field})
-    for (const [fld, val] of Object.entries(search)) {
-      try { await filterList(String(val), { field: fld }); } catch { /* proceed */ }
-    }
-  } else if (searchLower) {
-    // Inline advanced search (Alt+F, "по части строки")
-    await advancedSearchInline(selFormNum, searchText);
-  }
-  if (searchLower) {
-    const row = await scanGridRows(selFormNum, searchLower);
-    if (row?.x) {
-      const r = await trySelect(row);
-      if (r) return r;
     }
   }
 
@@ -1715,8 +1811,8 @@ async function isTypeDialog(formNum) {
  * @throws {Error} if type not found
  */
 async function pickFromTypeDialog(formNum, typeName) {
-  // The type dialog is a modal ValueList grid. Uses Ctrl+F "Найти" (Find) dialog
-  // to search in the virtual grid (only ~5 rows visible, scrolling unreliable).
+  // The type dialog is a modal ValueList grid.
+  // Strategy: scan visible rows first (fast path), fall back to Ctrl+F for large lists.
   //
   // Key constraints discovered during testing:
   // - Grid focus: use evaluate(() => gridBody.focus()), NOT page.click({force:true})
@@ -1727,26 +1823,73 @@ async function pickFromTypeDialog(formNum, typeName) {
   // - Enter/Escape in "Найти" close the ENTIRE dialog chain, not just "Найти"
   // - Closing "Найти" via Cancel resets the search — verify grid while "Найти" is open
 
-  // 1. Focus the grid via evaluate (does NOT punch through modal like page.click)
+  const typeNorm = normYo(typeName.toLowerCase());
+
+  // Helper: read visible rows and find matching ones
+  async function readVisibleRows() {
+    return page.evaluate(`(() => {
+      const grid = document.getElementById('form${formNum}_ValueList');
+      if (!grid) return { visible: [], matches: [] };
+      const body = grid.querySelector('.gridBody');
+      if (!body) return { visible: [], matches: [] };
+      const lines = body.querySelectorAll('.gridLine');
+      const norm = s => (s || '').replace(/\\u00a0/g, ' ').trim();
+      const typeNorm = ${JSON.stringify(typeNorm)};
+      const visible = [];
+      const matches = [];
+      for (const line of lines) {
+        const text = norm(line.innerText);
+        if (!text) continue;
+        visible.push(text);
+        if (text.toLowerCase().replace(/ё/gi, 'е').includes(typeNorm)) {
+          const r = line.getBoundingClientRect();
+          matches.push({ text, x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) });
+        }
+      }
+      return { visible, matches };
+    })()`);
+  }
+
+  // Step 1: Scan visible rows (fast path — no Ctrl+F needed for small lists)
+  const scan = await readVisibleRows();
+
+  if (scan.matches.length === 1) {
+    // Single match — click to select, then OK
+    await page.mouse.click(scan.matches[0].x, scan.matches[0].y);
+    await page.waitForTimeout(200);
+    await page.click(`#form${formNum}_OK`, { force: true });
+    await page.waitForTimeout(ACTION_WAIT);
+    return;
+  }
+
+  if (scan.matches.length > 1) {
+    for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(300); }
+    await waitForStable();
+    throw new Error(`selectValue: multiple types match "${typeName}": ${scan.matches.map(m => '"' + m.text + '"').join(', ')}. Specify a more precise type name`);
+  }
+
+  // Step 2: Not found in visible rows — use Ctrl+F (virtual grid may have more items)
+
+  // Focus the grid via evaluate (does NOT punch through modal like page.click)
   await page.evaluate(`(() => {
     const grid = document.getElementById('form${formNum}_ValueList');
     if (!grid) return;
     const body = grid.querySelector('.gridBody');
     if (body) body.focus(); else grid.focus();
   })()`);
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(300);
 
-  // 2. Ctrl+F to open "Найти" dialog
+  // Ctrl+F to open "Найти" dialog
   await page.keyboard.press('Control+f');
   await page.waitForTimeout(1000);
 
-  // 3. Paste search text (focus is on "Что искать" field)
+  // Paste search text (focus is on "Что искать" field)
   await page.keyboard.press('Control+a');
   await page.evaluate(`navigator.clipboard.writeText(${JSON.stringify(typeName)})`);
   await page.keyboard.press('Control+v');
   await page.waitForTimeout(300);
 
-  // 4. Find the "Найти" dialog form number (it's > formNum)
+  // Find the "Найти" dialog form number (it's > formNum)
   const findFormNum = await page.evaluate(`(() => {
     for (let n = ${formNum} + 1; n < ${formNum} + 20; n++) {
       const btn = document.getElementById('form' + n + '_Find');
@@ -1761,47 +1904,27 @@ async function pickFromTypeDialog(formNum, typeName) {
     throw new Error('selectValue: Ctrl+F did not open "Найти" dialog in type selection');
   }
 
-  // 5. Click "Найти" via page.click({force:true}) — evaluate click doesn't trigger 1C events
+  // Click "Найти" — search is client-side (no server round-trip), 500ms is enough
   await page.click(`#form${findFormNum}_Find`, { force: true });
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(500);
 
-  // 6. Read ALL visible grid rows and check how many match the search text.
-  // After Ctrl+F the grid scrolls to the found row — nearby matching rows are visible too.
-  // The "Найти" dialog may auto-close after search, so don't rely on clicking "Найти" again.
-  const gridCheck = await page.evaluate(`(() => {
-    const grid = document.getElementById('form${formNum}_ValueList');
-    if (!grid) return { visible: [], selected: null };
-    const body = grid.querySelector('.gridBody');
-    if (!body) return { visible: [], selected: null };
-    const lines = body.querySelectorAll('.gridLine');
-    const visible = [];
-    let selected = null;
-    for (const line of lines) {
-      const text = (line.innerText || '').trim().replace(/\\u00a0/g, ' ');
-      if (!text) continue;
-      visible.push(text);
-      if (line.classList.contains('select') || line.classList.contains('selRow')) selected = text;
-    }
-    return { visible, selected };
-  })()`);
+  // Re-read visible rows after search scrolled to match
+  const afterSearch = await readVisibleRows();
 
-  const typeNorm = normYo(typeName.toLowerCase());
-  const matching = (gridCheck.visible || []).filter(t => normYo(t.toLowerCase()).includes(typeNorm));
-
-  if (matching.length === 0) {
+  if (afterSearch.matches.length === 0) {
     for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(300); }
     await waitForStable();
     throw new Error(`selectValue: type "${typeName}" not found in type selection dialog` +
-      `. Visible: ${(gridCheck.visible || []).join(', ')}`);
+      `. Visible: ${(scan.visible || []).join(', ')}`);
   }
 
-  if (matching.length > 1) {
+  if (afterSearch.matches.length > 1) {
     for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(300); }
     await waitForStable();
-    throw new Error(`selectValue: multiple types match "${typeName}": ${matching.map(m => '"' + m + '"').join(', ')}. Specify a more precise type name`);
+    throw new Error(`selectValue: multiple types match "${typeName}": ${afterSearch.matches.map(m => '"' + m.text + '"').join(', ')}. Specify a more precise type name`);
   }
 
-  // 7. Click OK on type dialog via page.click({force:true}) — bypasses "Найти" modal
+  // Click OK on type dialog via page.click({force:true}) — bypasses "Найти" modal
   await page.click(`#form${formNum}_OK`, { force: true });
   await page.waitForTimeout(ACTION_WAIT);
 }

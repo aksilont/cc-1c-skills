@@ -1,5 +1,5 @@
 // build-epf.test.mjs — Integration test: build an external data processor (EPF) from scratch
-// Steps: epf-init → epf-add-form → form-compile → template-add → mxl-compile → epf-validate
+// Steps: epf-init → form-add → form-compile → template-add → mxl-compile → epf-validate
 
 export const name = 'Сборка внешней обработки с нуля';
 export const setup = 'none';
@@ -15,9 +15,9 @@ export const steps = [
 
   // ── 2. Add form ──
   {
-    name: 'epf-add-form: Форма к ТестоваяОбработка',
-    script: 'epf-add-form/scripts/add-form',
-    args: { '-ProcessorName': 'ТестоваяОбработка', '-FormName': 'Форма', '-SrcDir': '{workDir}' },
+    name: 'form-add: Форма к ТестоваяОбработка',
+    script: 'form-add/scripts/form-add',
+    args: { '-ObjectPath': '{workDir}/ТестоваяОбработка.xml', '-FormName': 'Форма' },
     validate: { script: 'epf-validate/scripts/epf-validate', flag: '-ObjectPath', path: 'ТестоваяОбработка' },
   },
 
@@ -28,7 +28,7 @@ export const steps = [
     input: {
       title: 'Тестовая обработка',
       attributes: [
-        { name: 'Объект', type: 'FormDataStructure', main: true },
+        { name: 'Объект', type: 'DataProcessorObject.ТестоваяОбработка', main: true },
         { name: 'Наименование', type: 'String' },
         { name: 'Количество', type: 'Number' },
       ],

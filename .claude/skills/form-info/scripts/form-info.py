@@ -342,7 +342,7 @@ def main():
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Analyze 1C managed form structure", allow_abbrev=False)
-    parser.add_argument("-FormPath", required=True, help="Path to Form.xml")
+    parser.add_argument("-FormPath", "-Path", required=True, help="Path to Form.xml")
     parser.add_argument("-Limit", type=int, default=150, help="Max lines to show")
     parser.add_argument("-Offset", type=int, default=0, help="Line offset for pagination")
     parser.add_argument("-Expand", default="", help="Expand collapsed section by name, or * for all")

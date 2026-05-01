@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# meta-edit v1.5 — Edit existing 1C metadata object XML (inline mode + complex properties + TS attribute ops + modify-ts)
+# meta-edit v1.6 — Edit existing 1C metadata object XML (inline mode + complex properties + TS attribute ops + modify-ts)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 
 import argparse
@@ -88,8 +88,8 @@ enum_value_aliases = {
     'RecordSubordinate': 'RecorderSubordinate', 'Subordinate': 'RecorderSubordinate',
     'ПодчинениеРегистратору': 'RecorderSubordinate', 'Независимый': 'Independent',
     # DependenceOnCalculationTypes (ChartOfCalculationTypes)
-    'NotDependOnCalculationTypes': 'DontUse', 'NoDependence': 'DontUse',
-    'Depend': 'RequireCalculationTypes', 'RequireCalculation': 'RequireCalculationTypes',
+    'NotDependOnCalculationTypes': 'DontUse', 'NoDependence': 'DontUse', 'NotUsed': 'DontUse',
+    'Depend': 'OnActionPeriod', 'ПоПериодуДействия': 'OnActionPeriod',
     # InformationRegisterPeriodicity
     'None': 'Nonperiodical', 'Daily': 'Day', 'Monthly': 'Month',
     'Quarterly': 'Quarter', 'Yearly': 'Year',
@@ -117,7 +117,7 @@ valid_enum_values = {
     'RegisterType': ['Balance', 'Turnovers'],
     'WriteMode': ['Independent', 'RecorderSubordinate'],
     'InformationRegisterPeriodicity': ['Nonperiodical', 'Second', 'Day', 'Month', 'Quarter', 'Year', 'RecorderPosition'],
-    'DependenceOnCalculationTypes': ['DontUse', 'RequireCalculationTypes'],
+    'DependenceOnCalculationTypes': ['DontUse', 'OnActionPeriod'],
     'DataLockControlMode': ['Automatic', 'Managed'],
     'FullTextSearch': ['Use', 'DontUse'],
     'DataHistory': ['Use', 'DontUse'],
@@ -140,16 +140,19 @@ valid_enum_values = {
 
 
 def normalize_enum_value(prop_name, value):
-    # 1. Check alias dictionary
+    # 1. Check alias dictionary — silent auto-correct
     if value in enum_value_aliases:
         return enum_value_aliases[value]
-    # 2. Case-insensitive match against valid values
+    # 2. Case-insensitive match against valid values — silent
     valid = valid_enum_values.get(prop_name)
     if valid:
         for v in valid:
             if v.lower() == value.lower():
                 return v
-    # 3. Return as-is (validator will catch if wrong)
+        # 3. Known property, unknown value — error with hint
+        print(f"Invalid value '{value}' for property '{prop_name}'. Valid values: {', '.join(valid)}", file=sys.stderr)
+        sys.exit(1)
+    # 4. Unknown property — pass-through (no validation data)
     return value
 
 
@@ -2118,7 +2121,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="Edit existing 1C metadata object XML", allow_abbrev=False)
     parser.add_argument("-DefinitionFile", default=None, help="JSON definition file")
-    parser.add_argument("-ObjectPath", required=True, help="Path to object XML or directory")
+    parser.add_argument("-ObjectPath", "-Path", required=True, help="Path to object XML or directory")
     parser.add_argument("-Operation", default=None, choices=valid_operations, help="Inline operation")
     parser.add_argument("-Value", default=None, help="Inline value")
     parser.add_argument("-NoValidate", action="store_true", help="Skip auto-validation")
@@ -2254,7 +2257,7 @@ def main():
             print()
             print("--- Running meta-validate ---")
             python_exe = sys.executable
-            subprocess.run([python_exe, validate_script, "-ObjectPath", resolved_path])
+            subprocess.run([python_exe, validate_script, "-ObjectPath", "-Path", resolved_path])
         else:
             print()
             print(f"[SKIP] meta-validate not found at: {validate_script}")

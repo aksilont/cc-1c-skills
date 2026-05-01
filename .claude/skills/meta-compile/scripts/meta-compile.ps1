@@ -1,4 +1,4 @@
-﻿# meta-compile v1.5 — Compile 1C metadata object from JSON
+﻿# meta-compile v1.10 — Compile 1C metadata object from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -87,8 +87,8 @@ $script:enumValueAliases = @{
 	"RecordSubordinate" = "RecorderSubordinate"; "Subordinate" = "RecorderSubordinate"
 	"ПодчинениеРегистратору" = "RecorderSubordinate"; "Независимый" = "Independent"
 	# DependenceOnCalculationTypes (ChartOfCalculationTypes)
-	"NotDependOnCalculationTypes" = "DontUse"; "NoDependence" = "DontUse"
-	"Depend" = "RequireCalculationTypes"; "RequireCalculation" = "RequireCalculationTypes"
+	"NotDependOnCalculationTypes" = "DontUse"; "NoDependence" = "DontUse"; "NotUsed" = "DontUse"
+	"Depend" = "OnActionPeriod"; "ПоПериодуДействия" = "OnActionPeriod"
 	# InformationRegisterPeriodicity
 	"None" = "Nonperiodical"; "Daily" = "Day"; "Monthly" = "Month"
 	"Quarterly" = "Quarter"; "Yearly" = "Year"
@@ -117,7 +117,7 @@ $script:validEnumValues = @{
 	"RegisterType"                   = @("Balance","Turnovers")
 	"WriteMode"                      = @("Independent","RecorderSubordinate")
 	"InformationRegisterPeriodicity" = @("Nonperiodical","Second","Day","Month","Quarter","Year","RecorderPosition")
-	"DependenceOnCalculationTypes"   = @("DontUse","RequireCalculationTypes")
+	"DependenceOnCalculationTypes"   = @("DontUse","OnActionPeriod")
 	"DataLockControlMode"            = @("Automatic","Managed")
 	"FullTextSearch"                 = @("Use","DontUse")
 	"DataHistory"                    = @("Use","DontUse")
@@ -136,22 +136,28 @@ $script:validEnumValues = @{
 	"ReuseSessions"                  = @("DontUse","AutoUse")
 	"FillChecking"                   = @("DontCheck","ShowError","ShowWarning")
 	"Indexing"                       = @("DontIndex","Index","IndexWithAdditionalOrder")
+	"SubordinationUse"               = @("ToItems","ToFolders","ToFoldersAndItems")
+	"CodeSeries"                     = @("WholeCatalog","WithinSubordination")
+	"ChoiceMode"                     = @("BothWays","QuickChoice","FromForm")
 }
 
 function Normalize-EnumValue {
 	param([string]$propName, [string]$value)
-	# 1. Check alias dictionary
+	# 1. Check alias dictionary — silent auto-correct
 	if ($script:enumValueAliases.ContainsKey($value)) {
 		return $script:enumValueAliases[$value]
 	}
-	# 2. Case-insensitive match against valid values
+	# 2. Case-insensitive match against valid values — silent
 	$valid = $script:validEnumValues[$propName]
 	if ($valid) {
 		foreach ($v in $valid) {
 			if ($v -ieq $value) { return $v }
 		}
+		# 3. Known property, unknown value — error with hint
+		Write-Error "Invalid value '$value' for property '$propName'. Valid values: $($valid -join ', ')"
+		exit 1
 	}
-	# 3. Return as-is (validator will catch if wrong)
+	# 4. Unknown property — pass-through (no validation data)
 	return $value
 }
 
@@ -495,6 +501,7 @@ function Parse-AttributeShorthand {
 		flags   = @(if ($val.flags) { $val.flags } else { @() })
 		fillChecking = if ($val.fillChecking) { "$($val.fillChecking)" } else { "" }
 		indexing = if ($val.indexing) { "$($val.indexing)" } else { "" }
+		multiLine = if ($val.multiLine -eq $true) { $true } else { $false }
 	}
 }
 
@@ -757,7 +764,8 @@ function Emit-Attribute {
 	param([string]$indent, $parsed, [string]$context)
 	# $context: "catalog", "document", "object", "processor", "tabular", "processor-tabular", "register"
 	$attrName = $parsed.name
-	if ($script:reservedAttrNames.ContainsKey($attrName) -or $script:reservedAttrNames.ContainsValue($attrName)) {
+	if ($context -notin @("tabular", "processor-tabular") -and
+		($script:reservedAttrNames.ContainsKey($attrName) -or $script:reservedAttrNames.ContainsValue($attrName))) {
 		Write-Warning "Attribute '$attrName' conflicts with a standard attribute name. This may cause errors when loading into 1C."
 	}
 	$uuid = New-Guid-String
@@ -784,18 +792,20 @@ function Emit-Attribute {
 	X "$indent`t`t<ToolTip/>"
 	X "$indent`t`t<MarkNegatives>false</MarkNegatives>"
 	X "$indent`t`t<Mask/>"
-	X "$indent`t`t<MultiLine>false</MultiLine>"
+	$multiLine = if ($parsed.multiLine -eq $true -or $parsed.flags -contains "multiline") { "true" } else { "false" }
+	X "$indent`t`t<MultiLine>$multiLine</MultiLine>"
 	X "$indent`t`t<ExtendedEdit>false</ExtendedEdit>"
 	X "$indent`t`t<MinValue xsi:nil=`"true`"/>"
 	X "$indent`t`t<MaxValue xsi:nil=`"true`"/>"
 
-	# FillFromFillingValue — not for tabular/processor (non-stored objects don't have these)
-	if ($context -notin @("tabular", "processor")) {
+	# FillFromFillingValue — not for tabular/processor/chart/register-other
+	# (Chart*, AccumulationRegister/AccountingRegister/CalculationRegister don't support these)
+	if ($context -notin @("tabular", "processor", "chart", "register-other")) {
 		X "$indent`t`t<FillFromFillingValue>false</FillFromFillingValue>"
 	}
 
-	# FillValue — not for tabular/processor
-	if ($context -notin @("tabular", "processor")) {
+	# FillValue — same restriction
+	if ($context -notin @("tabular", "processor", "chart", "register-other")) {
 		Emit-FillValue "$indent`t`t" $typeStr
 	}
 
@@ -828,7 +838,10 @@ function Emit-Attribute {
 		X "$indent`t`t<Indexing>$indexing</Indexing>"
 
 		X "$indent`t`t<FullTextSearch>Use</FullTextSearch>"
-		X "$indent`t`t<DataHistory>Use</DataHistory>"
+		# DataHistory — not for Chart* types and non-InformationRegister register family
+		if ($context -notin @("chart", "register-other")) {
+			X "$indent`t`t<DataHistory>Use</DataHistory>"
+		}
 	}
 
 	X "$indent`t</Properties>"
@@ -924,7 +937,8 @@ function Emit-Dimension {
 	X "$indent`t`t<ToolTip/>"
 	X "$indent`t`t<MarkNegatives>false</MarkNegatives>"
 	X "$indent`t`t<Mask/>"
-	X "$indent`t`t<MultiLine>false</MultiLine>"
+	$multiLine = if ($parsed.multiLine -eq $true -or $parsed.flags -contains "multiline") { "true" } else { "false" }
+	X "$indent`t`t<MultiLine>$multiLine</MultiLine>"
 	X "$indent`t`t<ExtendedEdit>false</ExtendedEdit>"
 	X "$indent`t`t<MinValue xsi:nil=`"true`"/>"
 	X "$indent`t`t<MaxValue xsi:nil=`"true`"/>"
@@ -1017,7 +1031,8 @@ function Emit-Resource {
 	X "$indent`t`t<ToolTip/>"
 	X "$indent`t`t<MarkNegatives>false</MarkNegatives>"
 	X "$indent`t`t<Mask/>"
-	X "$indent`t`t<MultiLine>false</MultiLine>"
+	$multiLine = if ($parsed.multiLine -eq $true -or $parsed.flags -contains "multiline") { "true" } else { "false" }
+	X "$indent`t`t<MultiLine>$multiLine</MultiLine>"
 	X "$indent`t`t<ExtendedEdit>false</ExtendedEdit>"
 	X "$indent`t`t<MinValue xsi:nil=`"true`"/>"
 	X "$indent`t`t<MaxValue xsi:nil=`"true`"/>"
@@ -1071,12 +1086,25 @@ function Emit-CatalogProperties {
 	$hierarchyType = Get-EnumProp "HierarchyType" "hierarchyType" "HierarchyFoldersAndItems"
 	X "$i<Hierarchical>$hierarchical</Hierarchical>"
 	X "$i<HierarchyType>$hierarchyType</HierarchyType>"
-	X "$i<LimitLevelCount>false</LimitLevelCount>"
-	X "$i<LevelCount>2</LevelCount>"
-	X "$i<FoldersOnTop>true</FoldersOnTop>"
+	$limitLevelCount = if ($def.limitLevelCount -eq $true) { "true" } else { "false" }
+	$levelCount = if ($null -ne $def.levelCount) { "$($def.levelCount)" } else { "2" }
+	$foldersOnTop = if ($def.foldersOnTop -eq $false) { "false" } else { "true" }
+	X "$i<LimitLevelCount>$limitLevelCount</LimitLevelCount>"
+	X "$i<LevelCount>$levelCount</LevelCount>"
+	X "$i<FoldersOnTop>$foldersOnTop</FoldersOnTop>"
 	X "$i<UseStandardCommands>true</UseStandardCommands>"
-	X "$i<Owners/>"
-	X "$i<SubordinationUse>ToItems</SubordinationUse>"
+	if ($def.owners -and $def.owners.Count -gt 0) {
+		X "$i<Owners>"
+		foreach ($ownerRef in $def.owners) {
+			$fullRef = if ("$ownerRef" -match '\.') { "$ownerRef" } else { "Catalog.$ownerRef" }
+			X "$i`t<xr:Item xsi:type=`"xr:MDObjectRef`">$fullRef</xr:Item>"
+		}
+		X "$i</Owners>"
+	} else {
+		X "$i<Owners/>"
+	}
+	$subordinationUse = Get-EnumProp "SubordinationUse" "subordinationUse" "ToItems"
+	X "$i<SubordinationUse>$subordinationUse</SubordinationUse>"
 
 	$codeLength = if ($null -ne $def.codeLength) { "$($def.codeLength)" } else { "9" }
 	$descriptionLength = if ($null -ne $def.descriptionLength) { "$($def.descriptionLength)" } else { "25" }
@@ -1089,7 +1117,8 @@ function Emit-CatalogProperties {
 	X "$i<DescriptionLength>$descriptionLength</DescriptionLength>"
 	X "$i<CodeType>$codeType</CodeType>"
 	X "$i<CodeAllowedLength>$codeAllowedLength</CodeAllowedLength>"
-	X "$i<CodeSeries>WholeCatalog</CodeSeries>"
+	$codeSeries = Get-EnumProp "CodeSeries" "codeSeries" "WholeCatalog"
+	X "$i<CodeSeries>$codeSeries</CodeSeries>"
 	X "$i<CheckUnique>$checkUnique</CheckUnique>"
 	X "$i<Autonumbering>$autonumbering</Autonumbering>"
 
@@ -1100,8 +1129,10 @@ function Emit-CatalogProperties {
 	X "$i<Characteristics/>"
 	X "$i<PredefinedDataUpdate>Auto</PredefinedDataUpdate>"
 	X "$i<EditType>InDialog</EditType>"
-	X "$i<QuickChoice>true</QuickChoice>"
-	X "$i<ChoiceMode>BothWays</ChoiceMode>"
+	$quickChoice = if ($def.quickChoice -eq $false) { "false" } else { "true" }
+	$choiceMode = Get-EnumProp "ChoiceMode" "choiceMode" "BothWays"
+	X "$i<QuickChoice>$quickChoice</QuickChoice>"
+	X "$i<ChoiceMode>$choiceMode</ChoiceMode>"
 	X "$i<InputByString>"
 	X "$i`t<xr:Field>Catalog.$objName.StandardAttribute.Description</xr:Field>"
 	X "$i`t<xr:Field>Catalog.$objName.StandardAttribute.Code</xr:Field>"
@@ -2537,13 +2568,32 @@ function Emit-AddressingAttribute {
 
 $script:xmlnsDecl = 'xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:app="http://v8.1c.ru/8.2/managed-application/core" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:cmi="http://v8.1c.ru/8.2/managed-application/cmi" xmlns:ent="http://v8.1c.ru/8.1/data/enterprise" xmlns:lf="http://v8.1c.ru/8.2/managed-application/logform" xmlns:style="http://v8.1c.ru/8.1/data/ui/style" xmlns:sys="http://v8.1c.ru/8.1/data/ui/fonts/system" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:web="http://v8.1c.ru/8.1/data/ui/colors/web" xmlns:win="http://v8.1c.ru/8.1/data/ui/colors/windows" xmlns:xen="http://v8.1c.ru/8.3/xcf/enums" xmlns:xpr="http://v8.1c.ru/8.3/xcf/predef" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
 
+# --- 14a. Detect format version from existing Configuration.xml ---
+
+function Detect-FormatVersion([string]$dir) {
+	$d = $dir
+	while ($d) {
+		$cfgPath = Join-Path $d "Configuration.xml"
+		if (Test-Path $cfgPath) {
+			$head = [System.IO.File]::ReadAllText($cfgPath, [System.Text.Encoding]::UTF8).Substring(0, [Math]::Min(2000, (Get-Item $cfgPath).Length))
+			if ($head -match '<MetaDataObject[^>]+version="(\d+\.\d+)"') { return $Matches[1] }
+		}
+		$parent = Split-Path $d -Parent
+		if ($parent -eq $d) { break }
+		$d = $parent
+	}
+	return "2.17"
+}
+
+$script:formatVersion = Detect-FormatVersion $OutputDir
+
 # --- 15. Main assembler ---
 
 $uuid = New-Guid-String
 
 # XML declaration
 X '<?xml version="1.0" encoding="UTF-8"?>'
-X "<MetaDataObject $($script:xmlnsDecl) version=`"2.17`">"
+X "<MetaDataObject $($script:xmlnsDecl) version=`"$($script:formatVersion)`">"
 X "`t<$objType uuid=`"$uuid`">"
 
 # InternalInfo
@@ -2633,6 +2683,7 @@ if ($objType -in $typesWithAttrTS) {
 			"Catalog"  { "catalog" }
 			"Document" { "document" }
 			{ $_ -in @("DataProcessor","Report") } { "processor" }
+			{ $_ -in @("ChartOfAccounts","ChartOfCharacteristicTypes","ChartOfCalculationTypes") } { "chart" }
 			default    { "object" }
 		}
 		foreach ($a in $attrs) {
@@ -2643,10 +2694,12 @@ if ($objType -in $typesWithAttrTS) {
 			Emit-TabularSection "`t`t`t" $tsName $columns $objType $objName
 		}
 		foreach ($af in $acctFlags) {
-			Emit-AccountingFlag "`t`t`t" "$af"
+			$afName = if ($af.name) { $af.name } else { "$af" }
+			Emit-AccountingFlag "`t`t`t" $afName
 		}
 		foreach ($edf in $extDimFlags) {
-			Emit-ExtDimensionAccountingFlag "`t`t`t" "$edf"
+			$edfName = if ($edf.name) { $edf.name } else { "$edf" }
+			Emit-ExtDimensionAccountingFlag "`t`t`t" $edfName
 		}
 		foreach ($aa in $addrAttrs) {
 			Emit-AddressingAttribute "`t`t`t" $aa
@@ -2709,8 +2762,11 @@ if ($objType -in @("InformationRegister","AccumulationRegister","AccountingRegis
 		foreach ($d in $dims) {
 			Emit-Dimension "`t`t`t" $d $objType
 		}
+		# InformationRegister.Attribute supports FillFromFillingValue/FillValue/DataHistory;
+		# AccumulationRegister/AccountingRegister/CalculationRegister.Attribute do NOT.
+		$regCtx = if ($objType -eq "InformationRegister") { "register-info" } else { "register-other" }
 		foreach ($a in $regAttrs) {
-			Emit-Attribute "`t`t`t" $a "register"
+			Emit-Attribute "`t`t`t" $a $regCtx
 		}
 		X "`t`t</ChildObjects>"
 	} else {
@@ -2904,7 +2960,7 @@ if ($objType -eq "ExchangePlan") {
 	$contentPath = Join-Path $extDir "Content.xml"
 	if (-not (Test-Path $contentPath)) {
 		Ensure-ExtDir
-		$contentXml = "<?xml version=`"1.0`" encoding=`"UTF-8`"?>`r`n<ExchangePlanContent xmlns=`"http://v8.1c.ru/8.3/xcf/extrnprops`" xmlns:xr=`"http://v8.1c.ru/8.3/xcf/readable`" version=`"2.17`"/>`r`n"
+		$contentXml = "<?xml version=`"1.0`" encoding=`"UTF-8`"?>`r`n<ExchangePlanContent xmlns=`"http://v8.1c.ru/8.3/xcf/extrnprops`" xmlns:xr=`"http://v8.1c.ru/8.3/xcf/readable`" version=`"$($script:formatVersion)`"/>`r`n"
 		[System.IO.File]::WriteAllText($contentPath, $contentXml, $enc)
 		$modulesCreated += $contentPath
 	}
@@ -2913,7 +2969,7 @@ if ($objType -eq "BusinessProcess") {
 	$flowchartPath = Join-Path $extDir "Flowchart.xml"
 	if (-not (Test-Path $flowchartPath)) {
 		Ensure-ExtDir
-		$flowchartXml = "<?xml version=`"1.0`" encoding=`"UTF-8`"?>`r`n<Flowchart xmlns=`"http://v8.1c.ru/8.3/MDClasses`" version=`"2.17`"/>`r`n"
+		$flowchartXml = "<?xml version=`"1.0`" encoding=`"UTF-8`"?>`r`n<Flowchart xmlns=`"http://v8.1c.ru/8.3/MDClasses`" version=`"$($script:formatVersion)`"/>`r`n"
 		[System.IO.File]::WriteAllText($flowchartPath, $flowchartXml, $enc)
 		$modulesCreated += $flowchartPath
 	}

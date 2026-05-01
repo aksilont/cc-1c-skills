@@ -1,6 +1,6 @@
 // platform-epf.test.mjs — Integration test: EPF build/dump roundtrip
 // Requires: 1C platform (1cv8.exe) via .v8-project.json
-// Steps: epf-init → epf-add-form → form-compile → epf-build → epf-dump
+// Steps: epf-init → form-add → form-compile → epf-build → epf-dump
 
 export const name = 'Сборка и разборка внешней обработки (roundtrip)';
 export const setup = 'none';
@@ -16,8 +16,8 @@ export const steps = [
 
   // ── 2. Add form to EPF ──
   {
-    name: 'epf-add-form: форма обработки',
-    script: 'epf-add-form/scripts/add-form',
+    name: 'form-add: форма обработки',
+    script: 'form-add/scripts/form-add',
     args: {
       '-ObjectPath': '{workDir}/RoundtripТест.xml',
       '-FormName': 'Форма',
@@ -39,7 +39,7 @@ export const steps = [
         { id: 'Загрузить', title: 'Загрузить' },
       ],
     },
-    args: { '-FormPath': '{workDir}/RoundtripТест/Forms/Форма', '-JsonPath': '{inputFile}' },
+    args: { '-OutputPath': '{workDir}/RoundtripТест/Forms/Форма/Ext/Form.xml', '-JsonPath': '{inputFile}' },
   },
 
   // ── 3. Build EPF binary ──

@@ -5,7 +5,8 @@
     "name": "ОстаткиТоваров",
     "registerType": "Balance",
     "dimensions": ["Номенклатура: CatalogRef.Номенклатура", "Склад: CatalogRef.Склады"],
-    "resources": ["Количество: Number(15,3)"]
+    "resources": ["Количество: Number(15,3)"],
+    "attributes": ["Комментарий: String(200)"]
   },
   "validatePath": "AccumulationRegisters/ОстаткиТоваров",
   "expect": {

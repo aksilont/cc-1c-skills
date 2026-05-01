@@ -221,7 +221,10 @@
 					</Synonym>
 					<Comment/>
 					<Indexing>DontIndex</Indexing>
-					<References/>
+					<References>
+						<xr:Item xsi:type="xr:MDObjectRef">Document.ПриходнаяНакладная.Attribute.Контрагент</xr:Item>
+						<xr:Item xsi:type="xr:MDObjectRef">Document.РасходнаяНакладная.Attribute.Контрагент</xr:Item>
+					</References>
 				</Properties>
 			</Column>
 		</ChildObjects>

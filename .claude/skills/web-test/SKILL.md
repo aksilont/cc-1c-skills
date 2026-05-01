@@ -155,6 +155,8 @@ const form = await getFormState();
 
 **confirmation** — if present, a Yes/No dialog is shown. Call `clickElement('Да')` or `clickElement('Нет')`.
 
+**errors.stateText** — array of SpreadsheetDocument state messages (e.g. `"Не установлено значение параметра \"X\""`, `"Отчет не сформирован..."`, `"Изменились настройки..."`). Present when the report area shows an info bar instead of data.
+
 ### Reading data
 
 #### `readTable({ maxRows?, offset?, table? })` → `{ columns, rows, total, shown, offset }`

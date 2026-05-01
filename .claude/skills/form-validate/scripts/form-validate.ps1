@@ -1,7 +1,8 @@
-﻿# form-validate v1.2 — Validate 1C managed form
+﻿# form-validate v1.4 — Validate 1C managed form
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
+	[Alias('Path')]
 	[string]$FormPath,
 
 	[switch]$Detailed,
@@ -58,6 +59,20 @@ $nsMgr.AddNamespace("v8", "http://v8.1c.ru/8.1/data/core")
 
 $root = $xmlDoc.DocumentElement
 
+# --- Detect context: config vs EPF/ERF ---
+# Walk up from FormPath looking for Configuration.xml → config context
+# No Configuration.xml → external data processor / report (EPF/ERF)
+$script:isConfigContext = $false
+$walkDir = Split-Path (Resolve-Path $FormPath) -Parent
+for ($i = 0; $i -lt 15; $i++) {
+	if (-not $walkDir -or $walkDir -eq (Split-Path $walkDir)) { break }
+	if (Test-Path (Join-Path $walkDir "Configuration.xml")) {
+		$script:isConfigContext = $true
+		break
+	}
+	$walkDir = Split-Path $walkDir
+}
+
 # --- Counters ---
 
 $errors = 0
@@ -112,10 +127,10 @@ if ($root.LocalName -ne "Form") {
 	Report-Error "Root element is '$($root.LocalName)', expected 'Form'"
 } else {
 	$version = $root.GetAttribute("version")
-	if ($version -eq "2.17") {
+	if ($version -eq "2.17" -or $version -eq "2.20") {
 		Report-OK "Root element: Form version=$version"
 	} elseif ($version) {
-		Report-Warn "Form version='$version' (expected 2.17)"
+		Report-Warn "Form version='$version' (expected 2.17 or 2.20)"
 	} else {
 		Report-Warn "Form version attribute missing"
 	}
@@ -696,6 +711,7 @@ $validCfgPrefixes = @(
 	"ChartOfCharacteristicTypesObject","ChartOfCharacteristicTypesRef"
 	"ConstantsSet","DataProcessorObject","DocumentObject","DocumentRef"
 	"DynamicList","EnumRef","ExchangePlanObject","ExchangePlanRef"
+	"ExternalDataProcessorObject","ExternalReportObject"
 	"InformationRegisterRecordManager","InformationRegisterRecordSet"
 	"ReportObject","TaskObject","TaskRef"
 )
@@ -719,7 +735,15 @@ if (-not $stopped) {
 			$cfgVal = $Matches[1]
 			if ($cfgVal -eq "DynamicList") { continue }
 			if ($cfgVal -match '^([^.]+)\.') {
-				if ($Matches[1] -in $validCfgPrefixes) { continue }
+				$pfx = $Matches[1]
+				if ($pfx -in $validCfgPrefixes) {
+					# ExternalDataProcessorObject/ExternalReportObject valid only for EPF/ERF, not config
+					if ($script:isConfigContext -and ($pfx -eq "ExternalDataProcessorObject" -or $pfx -eq "ExternalReportObject")) {
+						Report-Error "12. Type '$tv': External* type in configuration context (use DataProcessorObject/ReportObject instead)"
+						$typeOk = $false; $typeInvalid++
+					}
+					continue
+				}
 			}
 			Report-Warn "12. Type '$tv': unrecognized cfg prefix"
 			$typeOk = $false

@@ -1,6 +1,6 @@
 ---
 name: epf-init
-description: Создать пустую внешнюю обработку 1С (scaffold XML-исходников)
+description: Создать пустую внешнюю обработку 1С (scaffold XML-исходников). Используй когда нужно создать новую внешнюю обработку с нуля
 argument-hint: <Name> [Synonym]
 allowed-tools:
   - Bash
@@ -35,7 +35,7 @@ powershell.exe -NoProfile -File .claude/skills/epf-init/scripts/init.ps1 -Name "
 
 ## Дальнейшие шаги
 
-- Добавить форму: `/epf-add-form`
+- Добавить форму: `/form-add`
 - Добавить макет: `/template-add`
 - Добавить справку: `/help-add`
 - Собрать EPF: `/epf-build`

@@ -1,7 +1,7 @@
 ﻿# subsystem-validate v1.2 — Validate 1C subsystem XML structure
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
-	[Parameter(Mandatory)][string]$SubsystemPath,
+	[Parameter(Mandatory)][Alias('Path')][string]$SubsystemPath,
 	[switch]$Detailed,
 	[int]$MaxErrors = 30,
 	[string]$OutFile

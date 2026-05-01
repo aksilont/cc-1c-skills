@@ -82,7 +82,7 @@ def main():
     parser = argparse.ArgumentParser(
         description='Validate 1C subsystem XML structure', allow_abbrev=False
     )
-    parser.add_argument('-SubsystemPath', dest='SubsystemPath', required=True)
+    parser.add_argument('-SubsystemPath', '-Path', dest='SubsystemPath', required=True)
     parser.add_argument('-Detailed', action='store_true')
     parser.add_argument('-MaxErrors', dest='MaxErrors', type=int, default=30)
     parser.add_argument('-OutFile', dest='OutFile', default='')

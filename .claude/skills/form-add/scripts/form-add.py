@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-# form-add v1.2 — Add managed form to 1C config object
+# form-add v1.4 — Add managed form to 1C config object
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 
 import argparse
 import os
+import re
 import sys
 import uuid
 
@@ -13,6 +14,22 @@ NSMAP = {
     "md": "http://v8.1c.ru/8.3/MDClasses",
     "v8": "http://v8.1c.ru/8.1/data/core",
 }
+
+
+def detect_format_version(d):
+    while d:
+        cfg_path = os.path.join(d, "Configuration.xml")
+        if os.path.isfile(cfg_path):
+            with open(cfg_path, "r", encoding="utf-8-sig") as f:
+                head = f.read(2000)
+            m = re.search(r'<MetaDataObject[^>]+version="(\d+\.\d+)"', head)
+            if m:
+                return m.group(1)
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    return "2.17"
 
 
 def save_xml_with_bom(tree, path):
@@ -67,6 +84,8 @@ def main():
         sys.exit(1)
 
     object_xml_full = os.path.abspath(object_path)
+    format_version = detect_format_version(os.path.dirname(object_xml_full))
+
     parser_xml = etree.XMLParser(remove_blank_text=False)
     tree = etree.parse(object_xml_full, parser_xml)
     root = tree.getroot()
@@ -74,7 +93,7 @@ def main():
     supported_types = [
         "Document", "Catalog", "DataProcessor", "Report",
         "ExternalDataProcessor", "ExternalReport",
-        "InformationRegister", "ChartOfAccounts", "ChartOfCharacteristicTypes",
+        "InformationRegister", "AccumulationRegister", "ChartOfAccounts", "ChartOfCharacteristicTypes",
         "ExchangePlan", "BusinessProcess", "Task",
     ]
 
@@ -171,7 +190,7 @@ def main():
         ' xmlns:xr="http://v8.1c.ru/8.3/xcf/readable"'
         ' xmlns:xs="http://www.w3.org/2001/XMLSchema"'
         ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
-        ' version="2.17">\n'
+        f' version="{format_version}">\n'
         f'\t<Form uuid="{form_uuid}">\n'
         '\t\t<Properties>\n'
         f'\t\t\t<Name>{form_name}</Name>\n'
@@ -225,13 +244,10 @@ def main():
 
         form_xml = (
             f'<?xml version="1.0" encoding="UTF-8"?>\n'
-            f'<Form {form_ns_decl} version="2.17">\n'
+            f'<Form {form_ns_decl} version="{format_version}">\n'
             '\t<AutoCommandBar name="\u0424\u043e\u0440\u043c\u0430\u041a\u043e\u043c\u0430\u043d\u0434\u043d\u0430\u044f\u041f\u0430\u043d\u0435\u043b\u044c" id="-1">\n'
             '\t\t<Autofill>true</Autofill>\n'
             '\t</AutoCommandBar>\n'
-            '\t<Events>\n'
-            '\t\t<Event name="OnCreateAtServer">\u041f\u0440\u0438\u0421\u043e\u0437\u0434\u0430\u043d\u0438\u0438\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435</Event>\n'
-            '\t</Events>\n'
             '\t<ChildItems/>\n'
             '\t<Attributes>\n'
             '\t\t<Attribute name="\u0421\u043f\u0438\u0441\u043e\u043a" id="1">\n'
@@ -254,13 +270,10 @@ def main():
 
         form_xml = (
             f'<?xml version="1.0" encoding="UTF-8"?>\n'
-            f'<Form {form_ns_decl} version="2.17">\n'
+            f'<Form {form_ns_decl} version="{format_version}">\n'
             '\t<AutoCommandBar name="\u0424\u043e\u0440\u043c\u0430\u041a\u043e\u043c\u0430\u043d\u0434\u043d\u0430\u044f\u041f\u0430\u043d\u0435\u043b\u044c" id="-1">\n'
             '\t\t<Autofill>true</Autofill>\n'
             '\t</AutoCommandBar>\n'
-            '\t<Events>\n'
-            '\t\t<Event name="OnCreateAtServer">\u041f\u0440\u0438\u0421\u043e\u0437\u0434\u0430\u043d\u0438\u0438\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435</Event>\n'
-            '\t</Events>\n'
             '\t<ChildItems/>\n'
             '\t<Attributes>\n'
             f'\t\t<Attribute name="{main_attr_name}" id="1">\n'
@@ -291,19 +304,22 @@ def main():
             "BusinessProcess": "BusinessProcessObject",
             "Task": "TaskObject",
             "InformationRegister": "InformationRegisterRecordManager",
+            "AccumulationRegister": "AccumulationRegisterRecordSet",
         }
 
         main_attr_type = f"{attr_type_map[object_type]}.{object_name}"
 
+        # SavedData: standard for Catalog/Document/etc, but not for processor-like (DataProcessor/Report/External*)
+        saved_data_line = ''
+        if object_type not in processor_like_types:
+            saved_data_line = '\t\t\t<SavedData>true</SavedData>\n'
+
         form_xml = (
             f'<?xml version="1.0" encoding="UTF-8"?>\n'
-            f'<Form {form_ns_decl} version="2.17">\n'
+            f'<Form {form_ns_decl} version="{format_version}">\n'
             '\t<AutoCommandBar name="\u0424\u043e\u0440\u043c\u0430\u041a\u043e\u043c\u0430\u043d\u0434\u043d\u0430\u044f\u041f\u0430\u043d\u0435\u043b\u044c" id="-1">\n'
             '\t\t<Autofill>true</Autofill>\n'
             '\t</AutoCommandBar>\n'
-            '\t<Events>\n'
-            '\t\t<Event name="OnCreateAtServer">\u041f\u0440\u0438\u0421\u043e\u0437\u0434\u0430\u043d\u0438\u0438\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435</Event>\n'
-            '\t</Events>\n'
             '\t<ChildItems/>\n'
             '\t<Attributes>\n'
             f'\t\t<Attribute name="{main_attr_name}" id="1">\n'
@@ -311,7 +327,7 @@ def main():
             f'\t\t\t\t<v8:Type>cfg:{main_attr_type}</v8:Type>\n'
             '\t\t\t</Type>\n'
             '\t\t\t<MainAttribute>true</MainAttribute>\n'
-            '\t\t\t<SavedData>true</SavedData>\n'
+            f'{saved_data_line}'
             '\t\t</Attribute>\n'
             '\t</Attributes>\n'
             '</Form>'
@@ -328,11 +344,6 @@ def main():
 
     module_bsl = (
         '#\u041e\u0431\u043b\u0430\u0441\u0442\u044c \u041e\u0431\u0440\u0430\u0431\u043e\u0442\u0447\u0438\u043a\u0438\u0421\u043e\u0431\u044b\u0442\u0438\u0439\u0424\u043e\u0440\u043c\u044b\n'
-        '\n'
-        '&\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435\n'
-        '\u041f\u0440\u043e\u0446\u0435\u0434\u0443\u0440\u0430 \u041f\u0440\u0438\u0421\u043e\u0437\u0434\u0430\u043d\u0438\u0438\u041d\u0430\u0421\u0435\u0440\u0432\u0435\u0440\u0435(\u041e\u0442\u043a\u0430\u0437, \u0421\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f\u041e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0430)\n'
-        '\n'
-        '\u041a\u043e\u043d\u0435\u0446\u041f\u0440\u043e\u0446\u0435\u0434\u0443\u0440\u044b\n'
         '\n'
         '#\u041a\u043e\u043d\u0435\u0446\u041e\u0431\u043b\u0430\u0441\u0442\u0438\n'
         '\n'

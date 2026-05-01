@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# form-validate v1.2 — Validate 1C managed form
+# form-validate v1.4 — Validate 1C managed form
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 
 import argparse
@@ -43,6 +43,7 @@ VALID_CFG_PREFIXES = {
     'ChartOfCharacteristicTypesObject', 'ChartOfCharacteristicTypesRef',
     'ConstantsSet', 'DataProcessorObject', 'DocumentObject', 'DocumentRef',
     'DynamicList', 'EnumRef', 'ExchangePlanObject', 'ExchangePlanRef',
+    'ExternalDataProcessorObject', 'ExternalReportObject',
     'InformationRegisterRecordManager', 'InformationRegisterRecordSet',
     'ReportObject', 'TaskObject', 'TaskRef',
 }
@@ -56,7 +57,7 @@ def main():
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Validate 1C managed form", allow_abbrev=False)
-    parser.add_argument("-FormPath", required=True)
+    parser.add_argument("-FormPath", "-Path", required=True)
     parser.add_argument("-Detailed", action="store_true")
     parser.add_argument("-MaxErrors", type=int, default=30)
     args = parser.parse_args()
@@ -103,6 +104,18 @@ def main():
 
     root = tree.getroot()
 
+    # Detect context: config vs EPF/ERF
+    is_config_context = False
+    walk_dir = os.path.dirname(os.path.abspath(form_path))
+    for _ in range(15):
+        parent = os.path.dirname(walk_dir)
+        if parent == walk_dir:
+            break
+        if os.path.isfile(os.path.join(walk_dir, 'Configuration.xml')):
+            is_config_context = True
+            break
+        walk_dir = parent
+
     errors = 0
     warnings = 0
     ok_count = 0
@@ -148,10 +161,10 @@ def main():
         report_error(f"Root element is '{localname(root)}', expected 'Form'")
     else:
         version = root.get("version", "")
-        if version == "2.17":
+        if version in ("2.17", "2.20"):
             report_ok(f"Root element: Form version={version}")
         elif version:
-            report_warn(f"Form version='{version}' (expected 2.17)")
+            report_warn(f"Form version='{version}' (expected 2.17 or 2.20)")
         else:
             report_warn("Form version attribute missing")
 
@@ -645,7 +658,10 @@ def main():
                 suffix = tv[4:]  # after "cfg:"
                 prefix = suffix.split(".")[0]
                 if prefix in VALID_CFG_PREFIXES or suffix == "DynamicList":
-                    pass  # OK
+                    # ExternalDataProcessorObject/ExternalReportObject valid only in EPF/ERF context
+                    if is_config_context and prefix in ('ExternalDataProcessorObject', 'ExternalReportObject'):
+                        report_error(f'12. Type "{tv}": External* type in configuration context (use DataProcessorObject/ReportObject instead)')
+                        type_invalid += 1
                 else:
                     report_warn(f'12. Type "{tv}": unrecognized cfg prefix')
                     type_warn_count += 1

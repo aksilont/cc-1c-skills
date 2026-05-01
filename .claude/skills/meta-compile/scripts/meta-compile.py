@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# meta-compile v1.5 — Compile 1C metadata object from JSON
+# meta-compile v1.10 — Compile 1C metadata object from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 
 import argparse
@@ -147,8 +147,8 @@ enum_value_aliases = {
     'RecordSubordinate': 'RecorderSubordinate', 'Subordinate': 'RecorderSubordinate',
     'ПодчинениеРегистратору': 'RecorderSubordinate', 'Независимый': 'Independent',
     # DependenceOnCalculationTypes (ChartOfCalculationTypes)
-    'NotDependOnCalculationTypes': 'DontUse', 'NoDependence': 'DontUse',
-    'Depend': 'RequireCalculationTypes', 'RequireCalculation': 'RequireCalculationTypes',
+    'NotDependOnCalculationTypes': 'DontUse', 'NoDependence': 'DontUse', 'NotUsed': 'DontUse',
+    'Depend': 'OnActionPeriod', 'ПоПериодуДействия': 'OnActionPeriod',
     # InformationRegisterPeriodicity
     'None': 'Nonperiodical', 'Daily': 'Day', 'Monthly': 'Month',
     'Quarterly': 'Quarter', 'Yearly': 'Year',
@@ -177,7 +177,7 @@ valid_enum_values = {
     'RegisterType': ['Balance', 'Turnovers'],
     'WriteMode': ['Independent', 'RecorderSubordinate'],
     'InformationRegisterPeriodicity': ['Nonperiodical', 'Second', 'Day', 'Month', 'Quarter', 'Year', 'RecorderPosition'],
-    'DependenceOnCalculationTypes': ['DontUse', 'RequireCalculationTypes'],
+    'DependenceOnCalculationTypes': ['DontUse', 'OnActionPeriod'],
     'DataLockControlMode': ['Automatic', 'Managed'],
     'FullTextSearch': ['Use', 'DontUse'],
     'DataHistory': ['Use', 'DontUse'],
@@ -196,19 +196,25 @@ valid_enum_values = {
     'ReuseSessions': ['DontUse', 'AutoUse'],
     'FillChecking': ['DontCheck', 'ShowError', 'ShowWarning'],
     'Indexing': ['DontIndex', 'Index', 'IndexWithAdditionalOrder'],
+    'SubordinationUse': ['ToItems', 'ToFolders', 'ToFoldersAndItems'],
+    'CodeSeries': ['WholeCatalog', 'WithinSubordination'],
+    'ChoiceMode': ['BothWays', 'QuickChoice', 'FromForm'],
 }
 
 def normalize_enum_value(prop_name, value):
-    # 1. Check alias dictionary
+    # 1. Check alias dictionary — silent auto-correct
     if value in enum_value_aliases:
         return enum_value_aliases[value]
-    # 2. Case-insensitive match against valid values
+    # 2. Case-insensitive match against valid values — silent
     valid = valid_enum_values.get(prop_name)
     if valid:
         for v in valid:
             if v.lower() == value.lower():
                 return v
-    # 3. Return as-is (validator will catch if wrong)
+        # 3. Known property, unknown value — error with hint
+        print(f"Invalid value '{value}' for property '{prop_name}'. Valid values: {', '.join(valid)}", file=sys.stderr)
+        sys.exit(1)
+    # 4. Unknown property — pass-through (no validation data)
     return value
 
 def get_enum_prop(prop_name, field_name, default):
@@ -458,6 +464,7 @@ def parse_attribute_shorthand(val):
         'flags': list(val.get('flags', [])),
         'fillChecking': str(val['fillChecking']) if val.get('fillChecking') else '',
         'indexing': str(val['indexing']) if val.get('indexing') else '',
+        'multiLine': True if val.get('multiLine') is True else False,
     }
 
 def parse_enum_value_shorthand(val):
@@ -722,7 +729,7 @@ RESERVED_ATTR_NAMES_RU = {
 
 def emit_attribute(indent, parsed, context):
     attr_name = parsed['name']
-    if attr_name in RESERVED_ATTR_NAMES or attr_name in RESERVED_ATTR_NAMES_RU:
+    if context not in ('tabular', 'processor-tabular') and (attr_name in RESERVED_ATTR_NAMES or attr_name in RESERVED_ATTR_NAMES_RU):
         print(f"WARNING: Attribute '{attr_name}' conflicts with a standard attribute name. This may cause errors when loading into 1C.", file=sys.stderr)
     uid = new_uuid()
     X(f'{indent}<Attribute uuid="{uid}">')
@@ -743,13 +750,16 @@ def emit_attribute(indent, parsed, context):
     X(f'{indent}\t\t<ToolTip/>')
     X(f'{indent}\t\t<MarkNegatives>false</MarkNegatives>')
     X(f'{indent}\t\t<Mask/>')
-    X(f'{indent}\t\t<MultiLine>false</MultiLine>')
+    multi_line = 'true' if (parsed.get('multiLine') is True or 'multiline' in parsed.get('flags', [])) else 'false'
+    X(f'{indent}\t\t<MultiLine>{multi_line}</MultiLine>')
     X(f'{indent}\t\t<ExtendedEdit>false</ExtendedEdit>')
     X(f'{indent}\t\t<MinValue xsi:nil="true"/>')
     X(f'{indent}\t\t<MaxValue xsi:nil="true"/>')
-    if context not in ('tabular', 'processor'):
+    # FillFromFillingValue / FillValue — not for tabular/processor/chart/register-other
+    # (Chart*, AccumulationRegister/AccountingRegister/CalculationRegister don't support these)
+    if context not in ('tabular', 'processor', 'chart', 'register-other'):
         X(f'{indent}\t\t<FillFromFillingValue>false</FillFromFillingValue>')
-    if context not in ('tabular', 'processor'):
+    if context not in ('tabular', 'processor', 'chart', 'register-other'):
         emit_fill_value(f'{indent}\t\t', type_str)
     fill_checking = 'DontCheck'
     if 'req' in parsed.get('flags', []):
@@ -777,7 +787,9 @@ def emit_attribute(indent, parsed, context):
             indexing = parsed['indexing']
         X(f'{indent}\t\t<Indexing>{indexing}</Indexing>')
         X(f'{indent}\t\t<FullTextSearch>Use</FullTextSearch>')
-        X(f'{indent}\t\t<DataHistory>Use</DataHistory>')
+        # DataHistory — not for Chart* types and non-InformationRegister register family
+        if context not in ('chart', 'register-other'):
+            X(f'{indent}\t\t<DataHistory>Use</DataHistory>')
     X(f'{indent}\t</Properties>')
     X(f'{indent}</Attribute>')
 
@@ -857,7 +869,8 @@ def emit_dimension(indent, parsed, register_type):
     X(f'{indent}\t\t<ToolTip/>')
     X(f'{indent}\t\t<MarkNegatives>false</MarkNegatives>')
     X(f'{indent}\t\t<Mask/>')
-    X(f'{indent}\t\t<MultiLine>false</MultiLine>')
+    multi_line = 'true' if (parsed.get('multiLine') is True or 'multiline' in parsed.get('flags', [])) else 'false'
+    X(f'{indent}\t\t<MultiLine>{multi_line}</MultiLine>')
     X(f'{indent}\t\t<ExtendedEdit>false</ExtendedEdit>')
     X(f'{indent}\t\t<MinValue xsi:nil="true"/>')
     X(f'{indent}\t\t<MaxValue xsi:nil="true"/>')
@@ -930,7 +943,8 @@ def emit_resource(indent, parsed, register_type):
     X(f'{indent}\t\t<ToolTip/>')
     X(f'{indent}\t\t<MarkNegatives>false</MarkNegatives>')
     X(f'{indent}\t\t<Mask/>')
-    X(f'{indent}\t\t<MultiLine>false</MultiLine>')
+    multi_line = 'true' if (parsed.get('multiLine') is True or 'multiline' in parsed.get('flags', [])) else 'false'
+    X(f'{indent}\t\t<MultiLine>{multi_line}</MultiLine>')
     X(f'{indent}\t\t<ExtendedEdit>false</ExtendedEdit>')
     X(f'{indent}\t\t<MinValue xsi:nil="true"/>')
     X(f'{indent}\t\t<MaxValue xsi:nil="true"/>')
@@ -972,12 +986,24 @@ def emit_catalog_properties(indent):
     hierarchy_type = get_enum_prop('HierarchyType', 'hierarchyType', 'HierarchyFoldersAndItems')
     X(f'{i}<Hierarchical>{hierarchical}</Hierarchical>')
     X(f'{i}<HierarchyType>{hierarchy_type}</HierarchyType>')
-    X(f'{i}<LimitLevelCount>false</LimitLevelCount>')
-    X(f'{i}<LevelCount>2</LevelCount>')
-    X(f'{i}<FoldersOnTop>true</FoldersOnTop>')
+    limit_level_count = 'true' if defn.get('limitLevelCount') is True else 'false'
+    level_count = str(defn['levelCount']) if defn.get('levelCount') is not None else '2'
+    folders_on_top = 'false' if defn.get('foldersOnTop') is False else 'true'
+    X(f'{i}<LimitLevelCount>{limit_level_count}</LimitLevelCount>')
+    X(f'{i}<LevelCount>{level_count}</LevelCount>')
+    X(f'{i}<FoldersOnTop>{folders_on_top}</FoldersOnTop>')
     X(f'{i}<UseStandardCommands>true</UseStandardCommands>')
-    X(f'{i}<Owners/>')
-    X(f'{i}<SubordinationUse>ToItems</SubordinationUse>')
+    owners = defn.get('owners', [])
+    if owners:
+        X(f'{i}<Owners>')
+        for owner_ref in owners:
+            full_ref = owner_ref if '.' in str(owner_ref) else f'Catalog.{owner_ref}'
+            X(f'{i}\t<xr:Item xsi:type="xr:MDObjectRef">{full_ref}</xr:Item>')
+        X(f'{i}</Owners>')
+    else:
+        X(f'{i}<Owners/>')
+    subordination_use = get_enum_prop('SubordinationUse', 'subordinationUse', 'ToItems')
+    X(f'{i}<SubordinationUse>{subordination_use}</SubordinationUse>')
     code_length = str(defn['codeLength']) if defn.get('codeLength') is not None else '9'
     description_length = str(defn['descriptionLength']) if defn.get('descriptionLength') is not None else '25'
     code_type = get_enum_prop('CodeType', 'codeType', 'String')
@@ -988,7 +1014,8 @@ def emit_catalog_properties(indent):
     X(f'{i}<DescriptionLength>{description_length}</DescriptionLength>')
     X(f'{i}<CodeType>{code_type}</CodeType>')
     X(f'{i}<CodeAllowedLength>{code_allowed_length}</CodeAllowedLength>')
-    X(f'{i}<CodeSeries>WholeCatalog</CodeSeries>')
+    code_series = get_enum_prop('CodeSeries', 'codeSeries', 'WholeCatalog')
+    X(f'{i}<CodeSeries>{code_series}</CodeSeries>')
     X(f'{i}<CheckUnique>{check_unique}</CheckUnique>')
     X(f'{i}<Autonumbering>{autonumbering}</Autonumbering>')
     default_presentation = get_enum_prop('DefaultPresentation', 'defaultPresentation', 'AsDescription')
@@ -997,8 +1024,10 @@ def emit_catalog_properties(indent):
     X(f'{i}<Characteristics/>')
     X(f'{i}<PredefinedDataUpdate>Auto</PredefinedDataUpdate>')
     X(f'{i}<EditType>InDialog</EditType>')
-    X(f'{i}<QuickChoice>true</QuickChoice>')
-    X(f'{i}<ChoiceMode>BothWays</ChoiceMode>')
+    quick_choice = 'false' if defn.get('quickChoice') is False else 'true'
+    choice_mode = get_enum_prop('ChoiceMode', 'choiceMode', 'BothWays')
+    X(f'{i}<QuickChoice>{quick_choice}</QuickChoice>')
+    X(f'{i}<ChoiceMode>{choice_mode}</ChoiceMode>')
     X(f'{i}<InputByString>')
     X(f'{i}\t<xr:Field>Catalog.{obj_name}.StandardAttribute.Description</xr:Field>')
     X(f'{i}\t<xr:Field>Catalog.{obj_name}.StandardAttribute.Code</xr:Field>')
@@ -2201,13 +2230,34 @@ def emit_addressing_attribute(indent, addr_def):
 xmlns_decl = 'xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:app="http://v8.1c.ru/8.2/managed-application/core" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:cmi="http://v8.1c.ru/8.2/managed-application/cmi" xmlns:ent="http://v8.1c.ru/8.1/data/enterprise" xmlns:lf="http://v8.1c.ru/8.2/managed-application/logform" xmlns:style="http://v8.1c.ru/8.1/data/ui/style" xmlns:sys="http://v8.1c.ru/8.1/data/ui/fonts/system" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:web="http://v8.1c.ru/8.1/data/ui/colors/web" xmlns:win="http://v8.1c.ru/8.1/data/ui/colors/windows" xmlns:xen="http://v8.1c.ru/8.3/xcf/enums" xmlns:xpr="http://v8.1c.ru/8.3/xcf/predef" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
 
 # ---------------------------------------------------------------------------
+# 14a. Detect format version from existing Configuration.xml
+# ---------------------------------------------------------------------------
+
+def detect_format_version(d):
+    while d:
+        cfg_path = os.path.join(d, "Configuration.xml")
+        if os.path.isfile(cfg_path):
+            with open(cfg_path, "r", encoding="utf-8-sig") as f:
+                head = f.read(2000)
+            m = re.search(r'<MetaDataObject[^>]+version="(\d+\.\d+)"', head)
+            if m:
+                return m.group(1)
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    return "2.17"
+
+format_version = detect_format_version(output_dir)
+
+# ---------------------------------------------------------------------------
 # 15. Main assembler
 # ---------------------------------------------------------------------------
 
 obj_uuid = new_uuid()
 
 X('<?xml version="1.0" encoding="UTF-8"?>')
-X(f'<MetaDataObject {xmlns_decl} version="2.17">')
+X(f'<MetaDataObject {xmlns_decl} version="{format_version}">')
 X(f'\t<{obj_type} uuid="{obj_uuid}">')
 
 # InternalInfo
@@ -2305,6 +2355,8 @@ if obj_type in types_with_attr_ts:
             context = 'document'
         elif obj_type in ('DataProcessor', 'Report'):
             context = 'processor'
+        elif obj_type in ('ChartOfAccounts', 'ChartOfCharacteristicTypes', 'ChartOfCalculationTypes'):
+            context = 'chart'
         else:
             context = 'object'
         for a in attrs:
@@ -2313,9 +2365,11 @@ if obj_type in types_with_attr_ts:
             columns = ts_sections[ts_name]
             emit_tabular_section('\t\t\t', ts_name, columns, obj_type, obj_name)
         for af in acct_flags:
-            emit_accounting_flag('\t\t\t', str(af))
+            af_name = af['name'] if isinstance(af, dict) else str(af)
+            emit_accounting_flag('\t\t\t', af_name)
         for edf in ext_dim_flags:
-            emit_ext_dimension_accounting_flag('\t\t\t', str(edf))
+            edf_name = edf['name'] if isinstance(edf, dict) else str(edf)
+            emit_ext_dimension_accounting_flag('\t\t\t', edf_name)
         for aa in addr_attrs:
             emit_addressing_attribute('\t\t\t', aa)
         X('\t\t</ChildObjects>')
@@ -2360,8 +2414,11 @@ if obj_type in ('InformationRegister', 'AccumulationRegister', 'AccountingRegist
             emit_resource('\t\t\t', r, obj_type)
         for d in dims:
             emit_dimension('\t\t\t', d, obj_type)
+        # InformationRegister.Attribute supports FillFromFillingValue/FillValue/DataHistory;
+        # AccumulationRegister/AccountingRegister/CalculationRegister.Attribute do NOT.
+        reg_ctx = 'register-info' if obj_type == 'InformationRegister' else 'register-other'
         for a in reg_attrs:
-            emit_attribute('\t\t\t', a, 'register')
+            emit_attribute('\t\t\t', a, reg_ctx)
         X('\t\t</ChildObjects>')
     else:
         X('\t\t<ChildObjects/>')
@@ -2525,7 +2582,7 @@ if obj_type == 'ExchangePlan':
     content_path = os.path.join(ext_dir, 'Content.xml')
     if not os.path.isfile(content_path):
         ensure_ext_dir()
-        content_xml = '<?xml version="1.0" encoding="UTF-8"?>\r\n<ExchangePlanContent xmlns="http://v8.1c.ru/8.3/xcf/extrnprops" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" version="2.17"/>\r\n'
+        content_xml = f'<?xml version="1.0" encoding="UTF-8"?>\r\n<ExchangePlanContent xmlns="http://v8.1c.ru/8.3/xcf/extrnprops" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable" version="{format_version}"/>\r\n'
         write_utf8_bom(content_path, content_xml)
         modules_created.append(content_path)
 
@@ -2533,7 +2590,7 @@ if obj_type == 'BusinessProcess':
     flowchart_path = os.path.join(ext_dir, 'Flowchart.xml')
     if not os.path.isfile(flowchart_path):
         ensure_ext_dir()
-        flowchart_xml = '<?xml version="1.0" encoding="UTF-8"?>\r\n<Flowchart xmlns="http://v8.1c.ru/8.3/MDClasses" version="2.17"/>\r\n'
+        flowchart_xml = f'<?xml version="1.0" encoding="UTF-8"?>\r\n<Flowchart xmlns="http://v8.1c.ru/8.3/MDClasses" version="{format_version}"/>\r\n'
         write_utf8_bom(flowchart_path, flowchart_xml)
         modules_created.append(flowchart_path)
 

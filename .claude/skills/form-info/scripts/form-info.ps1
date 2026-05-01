@@ -2,6 +2,7 @@
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory=$true)]
+	[Alias('Path')]
 	[string]$FormPath,
 	[int]$Limit = 150,
 	[int]$Offset = 0,

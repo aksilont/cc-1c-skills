@@ -14,7 +14,7 @@ sys.stderr.reconfigure(encoding="utf-8")
 # ── arg parsing ──────────────────────────────────────────────
 
 parser = argparse.ArgumentParser(allow_abbrev=False)
-parser.add_argument("-FormPath", required=True)
+parser.add_argument("-FormPath", "-Path", required=True)
 parser.add_argument("-JsonPath", required=True)
 args = parser.parse_args()
 

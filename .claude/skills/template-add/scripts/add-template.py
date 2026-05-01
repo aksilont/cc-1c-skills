@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-# add-template v1.0 — Add template to 1C object
+# add-template v1.4 — Add template to 1C object
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 
 import argparse
 import os
+import re
 import sys
 import uuid
 
@@ -37,6 +38,22 @@ def write_text_with_bom(path, text):
         f.write(text)
 
 
+def detect_format_version(d):
+    while d:
+        cfg_path = os.path.join(d, "Configuration.xml")
+        if os.path.isfile(cfg_path):
+            with open(cfg_path, "r", encoding="utf-8-sig") as f:
+                head = f.read(2000)
+            m = re.search(r'<MetaDataObject[^>]+version="(\d+\.\d+)"', head)
+            if m:
+                return m.group(1)
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    return "2.17"
+
+
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
@@ -59,12 +76,37 @@ def main():
 
     tmpl = TYPE_MAP[template_type]
 
+    format_version = detect_format_version(os.path.abspath(src_dir))
+
     # --- Checks ---
+
+    object_type_folders = [
+        "Reports", "DataProcessors", "Documents", "Catalogs",
+        "InformationRegisters", "AccumulationRegisters",
+        "ChartsOfCharacteristicTypes", "ChartsOfAccounts", "ChartsOfCalculationTypes",
+        "BusinessProcesses", "Tasks", "ExchangePlans",
+    ]
 
     root_xml_path = os.path.join(src_dir, f"{object_name}.xml")
     if not os.path.exists(root_xml_path):
-        print(f"Корневой файл обработки не найден: {root_xml_path}", file=sys.stderr)
-        sys.exit(1)
+        candidates = []
+        for folder in object_type_folders:
+            probe = os.path.join(src_dir, folder, f"{object_name}.xml")
+            if os.path.exists(probe):
+                candidates.append(os.path.join(src_dir, folder))
+        if len(candidates) == 1:
+            src_dir = candidates[0]
+            root_xml_path = os.path.join(src_dir, f"{object_name}.xml")
+            print(f"[INFO] SrcDir расширен до: {src_dir}")
+        elif len(candidates) > 1:
+            print(f"Объект '{object_name}' найден в нескольких подпапках: {', '.join(candidates)}", file=sys.stderr)
+            print(f"Укажи SrcDir явно", file=sys.stderr)
+            sys.exit(1)
+        else:
+            print(f"Корневой файл объекта не найден: {root_xml_path}", file=sys.stderr)
+            print(f"Ожидается: <SrcDir>/<ObjectName>.xml", file=sys.stderr)
+            print(f"Подсказка: SrcDir должен указывать на папку типа объектов (например Reports), а не на корень конфигурации", file=sys.stderr)
+            sys.exit(1)
 
     processor_dir = os.path.join(src_dir, object_name)
     templates_dir = os.path.join(processor_dir, "Templates")
@@ -102,7 +144,7 @@ def main():
         ' xmlns:xr="http://v8.1c.ru/8.3/xcf/readable"'
         ' xmlns:xs="http://www.w3.org/2001/XMLSchema"'
         ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
-        ' version="2.17">\n'
+        f' version="{format_version}">\n'
         f'\t<Template uuid="{template_uuid}">\n'
         '\t\t<Properties>\n'
         f'\t\t\t<Name>{template_name}</Name>\n'
