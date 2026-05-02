@@ -40,10 +40,6 @@ export default async function({ navigateSection, openCommand, clickElement, clos
   });
 
   await step('confirm-save-yes: fillField + closeForm({save:true}) → значение сохранилось', async () => {
-    // ВНИМАНИЕ: тест требует <SavedData>true</SavedData> у MainAttribute
-    // главной формы Контрагенты. См. T11 в upload/web-test-runner-tasks.md —
-    // form-compile сейчас не эмитит этот флаг, форма патчится вручную.
-    // После прогона build-webtest-db.mjs тест упадёт пока не пофиксят T11.
     await navigateSection('Склад');
     await openCommand('Контрагенты');
     await clickElement('ООО Восток', { dblclick: true });
