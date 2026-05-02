@@ -39,17 +39,17 @@ export default async function({ navigateSection, openCommand, clickElement, clos
     log(`closed=${after.closed} form-was=${before.form}`);
   });
 
-  await step('save-via-button: fillField + "Записать и закрыть" → значение сохранилось', async () => {
-    // NB: closeForm({save:true}) ожидает confirmation dialog, но fillField через
-    // paste не выставляет 1C "modified" флаг → диалог не появляется и Escape
-    // просто закрывает форму без сохранения. Save-flow покрываем через явную
-    // кнопку «Записать и закрыть»; confirm-save-yes отложен как баг движка.
+  await step('confirm-save-yes: fillField + closeForm({save:true}) → значение сохранилось', async () => {
+    // ВНИМАНИЕ: тест требует <SavedData>true</SavedData> у MainAttribute
+    // главной формы Контрагенты. См. T11 в upload/web-test-runner-tasks.md —
+    // form-compile сейчас не эмитит этот флаг, форма патчится вручную.
+    // После прогона build-webtest-db.mjs тест упадёт пока не пофиксят T11.
     await navigateSection('Склад');
     await openCommand('Контрагенты');
     await clickElement('ООО Восток', { dblclick: true });
     const newPhone = '+7 (999) 111-22-33';
     await fillField('Телефон', newPhone);
-    await clickElement('Записать и закрыть');
+    await closeForm({ save: true });
 
     // Verify persisted
     await navigateSection('Склад');
