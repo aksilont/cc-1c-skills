@@ -31,13 +31,24 @@ export default async function({ navigateSection, openCommand, clickElement, fill
     assert.notEqual(after.form, before.form, 'После Провести и закрыть текущая форма должна смениться (документ закрылся)');
   });
 
-  await step('verify-list: документ виден в списке с Проведён=Да', async () => {
+  await step('verify-list: документ текущего прогона проведён (по Комментарий=docId)', async () => {
     await navigateSection('Склад');
     await openCommand('Приходная накладная');
     const t = await readTable({ maxRows: 50 });
-    const ours = t.rows.find(r => r['Контрагент'] === 'ООО Север' && r['Проведён'] === 'Да');
-    log(`found posted: ${JSON.stringify(ours)}`);
-    assert.ok(ours, 'Должен быть проведённый документ ООО Север');
-    await closeForm();
+    const candidates = t.rows.filter(r => r['Контрагент'] === 'ООО Север' && r['Проведён'] === 'Да');
+    log(`candidates posted Север: ${candidates.length}`);
+    assert.ok(candidates.length > 0, 'В списке должен быть хотя бы один проведённый документ Север');
+
+    let foundOurs = null;
+    for (const row of candidates) {
+      await clickElement(row['Номер'], { dblclick: true });
+      const s = await getFormState();
+      const cmt = s.fields?.find(f => f.name === 'Комментарий')?.value;
+      const num = row['Номер'];
+      log(`№${num} Комментарий='${cmt}'`);
+      await closeForm();
+      if (cmt === docId) { foundOurs = num; break; }
+    }
+    assert.ok(foundOurs, `Среди проведённых должен быть документ с Комментарий='${docId}'`);
   });
 }
