@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// web-test run v1.4 — CLI runner for 1C web client automation
+// web-test run v1.5 — CLI runner for 1C web client automation
 // Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 /**
  * CLI runner for 1C web client automation.
@@ -18,7 +18,7 @@
  */
 import http from 'http';
 import * as browser from './browser.mjs';
-import { readFileSync, writeFileSync, unlinkSync, existsSync, readdirSync } from 'fs';
+import { readFileSync, writeFileSync, unlinkSync, existsSync, readdirSync, mkdirSync } from 'fs';
 import { resolve, dirname, basename, relative } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -335,7 +335,7 @@ function cmdStatus() {
 
 async function cmdTest(rawArgs) {
   // Parse flags
-  const opts = { bail: false, retry: 0, timeout: 30000, report: null, format: 'json' };
+  const opts = { bail: false, retry: 0, timeout: 30000, report: null, format: 'json', screenshot: null, reportDir: null };
   let tags = null, grep = null;
   const positional = [];
   for (const a of rawArgs) {
@@ -346,6 +346,8 @@ async function cmdTest(rawArgs) {
     else if (a.startsWith('--timeout=')) opts.timeout = parseInt(a.slice(10)) || 30000;
     else if (a.startsWith('--report=')) opts.report = a.slice(9);
     else if (a.startsWith('--format=')) opts.format = a.slice(9);
+    else if (a.startsWith('--screenshot=')) opts.screenshot = a.slice(13);
+    else if (a.startsWith('--report-dir=')) opts.reportDir = a.slice(13);
     else if (!a.startsWith('--'))      positional.push(a);
   }
 
@@ -378,6 +380,17 @@ async function cmdTest(rawArgs) {
   if (!tags && config.tags) tags = config.tags;
   opts.timeout = rawArgs.some(a => a.startsWith('--timeout=')) ? opts.timeout : (config.timeout || opts.timeout);
   opts.retry = rawArgs.some(a => a.startsWith('--retry=')) ? opts.retry : (config.retries || opts.retry);
+  opts.screenshot = opts.screenshot || config.screenshot || 'on-failure';
+  if (!['on-failure', 'every-step', 'off'].includes(opts.screenshot)) {
+    die(`Invalid --screenshot=${opts.screenshot} (expected on-failure|every-step|off)`);
+  }
+  // Resolve report directory: --report-dir, else dirname(--report), else testDir
+  const reportDir = opts.reportDir
+    ? resolve(opts.reportDir)
+    : (opts.report ? dirname(resolve(opts.report)) : testDir);
+  if (opts.screenshot !== 'off') {
+    try { mkdirSync(reportDir, { recursive: true }); } catch {}
+  }
 
   // Discover test files
   const testFiles = discoverTests(testPath);
@@ -443,7 +456,9 @@ async function cmdTest(rawArgs) {
     if (hooks.beforeAll) await hooks.beforeAll(ctx);
 
     // Execute tests
+    let testIdx = 0;
     for (const t of filtered) {
+      testIdx++;
       if (t.skip) {
         const reason = typeof t.skip === 'string' ? t.skip : '';
         W.write(`  \u25CB ${t.name}${reason ? ` (skip: ${reason})` : ' (skip)'}\n`);
@@ -460,6 +475,7 @@ async function cmdTest(rawArgs) {
         const output = [];
         let steps = [];
         let currentSteps = steps;
+        let stepIdx = 0;
         const t0 = Date.now();
 
         // Wire up per-test log and step
@@ -469,6 +485,8 @@ async function cmdTest(rawArgs) {
           currentSteps.push(s);
           const prev = currentSteps;
           currentSteps = s.steps;
+          stepIdx++;
+          const myIdx = stepIdx;
           try {
             await fn();
           } catch (e) {
@@ -478,6 +496,15 @@ async function cmdTest(rawArgs) {
           } finally {
             s.stop = Date.now();
             currentSteps = prev;
+            if (opts.screenshot === 'every-step' && s.status === 'passed') {
+              try {
+                const slug = slugify(name);
+                const file = resolve(reportDir, `${testIdx}-${myIdx}-${slug}.png`);
+                const png = await browser.screenshot();
+                writeFileSync(file, png);
+                s.screenshot = file;
+              } catch {}
+            }
           }
         };
 
@@ -513,12 +540,12 @@ async function cmdTest(rawArgs) {
           // Built-in state reset
           await resetState(ctx);
 
-          // Screenshot on failure
+          // Screenshot on failure (skip if strategy is 'off')
           let shotFile = e.onecError?.screenshot;
-          if (!shotFile) {
+          if (!shotFile && opts.screenshot !== 'off') {
             try {
               const png = await browser.screenshot();
-              shotFile = resolve(__dirname, '..', `error-shot-${t.file.replace(/[/\\]/g, '-')}.png`);
+              shotFile = resolve(reportDir, `error-${testIdx}-${slugify(t.file.replace(/\.test\.mjs$/, ''))}.png`);
               writeFileSync(shotFile, png);
             } catch {}
           }
@@ -621,6 +648,14 @@ function printSteps(W, steps, indent) {
 
 function elapsed2(start, stop) {
   return Math.round(((stop || Date.now()) - start) / 100) / 10;
+}
+
+function slugify(s) {
+  return String(s).trim()
+    .replace(/[\s/\\:*?"<>|]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 60) || 'step';
 }
 
 function formatDuration(seconds) {
@@ -764,5 +799,8 @@ Options for test:
   --bail                   Stop on first failure
   --retry=N                Retry failed tests N times
   --timeout=ms             Per-test timeout (default: 30000)
-  --report=path            Write JSON report to file`);
+  --report=path            Write JSON report to file
+  --report-dir=path        Directory for screenshots and other artifacts
+  --screenshot=mode        on-failure (default) | every-step | off
+  --format=fmt             json (default) | allure | junit`);
 }
