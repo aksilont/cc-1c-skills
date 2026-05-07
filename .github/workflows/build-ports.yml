@@ -7,6 +7,8 @@ on:
       - '.claude/skills/**'
       - 'scripts/switch.py'
       - '.github/templates/README.port.md.tmpl'
+      - '.github/templates/codex-plugin.json.tmpl'
+      - '.github/templates/claude-plugin.json.tmpl'
       - '.github/workflows/build-ports.yml'
       - 'LICENSE'
   workflow_dispatch:
@@ -177,6 +179,32 @@ jobs:
             -e "s|{{COMMIT_SHA}}|${COMMIT_SHA}|g" \
             -e "s|{{MAIN_REPO_URL}}|${MAIN_REPO_URL}|g" \
             .github/templates/README.port.md.tmpl > build/README.md
+
+      - name: Render Codex plugin manifest
+        if: matrix.platform == 'codex'
+        env:
+          PLUGIN_NAME: ${{ matrix.runtime == 'python' && '1c-skills-py' || '1c-skills' }}
+          RUNTIME_LABEL: ${{ matrix.runtime == 'powershell' && 'PowerShell' || 'Python' }}
+          SHORT_DESCRIPTION: ${{ matrix.runtime == 'python' && 'Python runtime (Linux/Mac/Windows)' || 'PowerShell runtime (Windows-first)' }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          VERSION="$(date -u +%Y.%-m.%-d)+${COMMIT_SHA::7}"
+          mkdir -p build/.codex-plugin
+          sed \
+            -e "s|{{PLUGIN_NAME}}|${PLUGIN_NAME}|g" \
+            -e "s|{{VERSION}}|${VERSION}|g" \
+            -e "s|{{RUNTIME_LABEL}}|${RUNTIME_LABEL}|g" \
+            -e "s|{{SHORT_DESCRIPTION}}|${SHORT_DESCRIPTION}|g" \
+            .github/templates/codex-plugin.json.tmpl > build/.codex-plugin/plugin.json
+
+      - name: Render Claude plugin manifest (Py variant)
+        if: matrix.platform == 'claude-code' && matrix.runtime == 'python'
+        env:
+          PLUGIN_NAME: 1c-skills-py
+        run: |
+          mkdir -p build/.claude-plugin
+          sed -e "s|{{PLUGIN_NAME}}|${PLUGIN_NAME}|g" \
+            .github/templates/claude-plugin.json.tmpl > build/.claude-plugin/plugin.json
 
       - name: Copy LICENSE
         run: cp LICENSE build/LICENSE

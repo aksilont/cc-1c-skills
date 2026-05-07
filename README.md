@@ -26,7 +26,15 @@
 
 ```
 /plugin marketplace add https://github.com/Nikolay-Shirokov/cc-1c-skills
-/plugin install 1c-skills@cc-1c-skills
+/plugin install 1c-skills@cc-1c-skills        # PowerShell (Windows)
+/plugin install 1c-skills-py@cc-1c-skills     # Python (Linux/Mac или если PS недоступен)
+```
+
+Или установите как плагин OpenAI Codex:
+
+```
+codex plugin marketplace add Nikolay-Shirokov/cc-1c-skills
+codex /plugins   # выберите 1c-skills (PowerShell) или 1c-skills-py (Python) и нажмите Install
 ```
 
 Или используйте скрипт установки:
