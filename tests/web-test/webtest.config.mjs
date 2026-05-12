@@ -3,8 +3,8 @@
 // 1C sessions (different cookies), used by multi-context tests to simulate two users.
 export default {
   contexts: {
-    a: { url: 'http://localhost:8081/webtest/ru_RU' },
-    b: { url: 'http://localhost:8081/webtest/ru_RU' },
+    a: { url: 'http://localhost:9191/webtest/ru_RU' },
+    b: { url: 'http://localhost:9191/webtest/ru_RU' },
   },
   defaultContext: 'a',
   // isolation: 'tab' (default) — persistent context, tabs in one window, 1С extension loads.
