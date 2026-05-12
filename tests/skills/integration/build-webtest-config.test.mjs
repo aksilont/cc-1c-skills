@@ -361,6 +361,19 @@ export const steps = [
     validate: { script: 'meta-validate/scripts/meta-validate', flag: '-ObjectPath', path: 'DataProcessors/ТестовыеОшибки' },
   },
 
+  // Обработка ДеревоНоменклатуры — реквизит формы ДеревоЗначений с данными
+  // справочника Номенклатура для тестов tree-grid (05-table/direct-edit-form,
+  // 08-hierarchy/tree-edit).
+  {
+    name: 'meta-compile: Обработка ДеревоНоменклатуры',
+    script: 'meta-compile/scripts/meta-compile',
+    input: {
+      type: 'DataProcessor', name: 'ДеревоНоменклатуры',
+    },
+    args: { '-JsonPath': '{inputFile}', '-OutputDir': '{workDir}' },
+    validate: { script: 'meta-validate/scripts/meta-validate', flag: '-ObjectPath', path: 'DataProcessors/ДеревоНоменклатуры' },
+  },
+
   // Отчёт ОстаткиТоваров
   {
     name: 'meta-compile: Отчёт ОстаткиТоваров',
@@ -675,6 +688,69 @@ export const steps = [
 `,
   },
 
+  // Форма обработки ДеревоНоменклатуры — tree-grid с двумя колонками
+  {
+    name: 'form-add: Форма обработки ДеревоНоменклатуры',
+    script: 'form-add/scripts/form-add',
+    args: { '-ObjectPath': '{workDir}/DataProcessors/ДеревоНоменклатуры.xml', '-FormName': 'ФормаОбработки' },
+  },
+  {
+    name: 'form-compile: Форма обработки ДеревоНоменклатуры',
+    script: 'form-compile/scripts/form-compile',
+    input: {
+      title: 'Дерево номенклатуры',
+      events: { OnCreateAtServer: 'ПриСозданииНаСервере' },
+      attributes: [
+        { name: 'Объект', type: 'DataProcessorObject.ДеревоНоменклатуры', main: true },
+        { name: 'Дерево', type: 'ValueTree', columns: [
+          { name: 'Номенклатура', type: 'CatalogRef.Номенклатура', title: 'Номенклатура' },
+          { name: 'Цена', type: 'Number(15,2)', title: 'Цена' },
+        ]},
+      ],
+      elements: [
+        { table: 'Дерево', path: 'Дерево', initialTreeView: 'ExpandTopLevel', changeRowSet: true, columns: [
+          { input: 'Номенклатура', path: 'Дерево.Номенклатура', readOnly: true, title: 'Номенклатура' },
+          { input: 'Цена', path: 'Дерево.Цена', title: 'Цена' },
+        ]},
+      ],
+    },
+    args: { '-JsonPath': '{inputFile}', '-OutputPath': '{workDir}/DataProcessors/ДеревоНоменклатуры/Forms/ФормаОбработки/Ext/Form.xml' },
+    validate: { script: 'form-validate/scripts/form-validate', flag: '-FormPath', path: 'DataProcessors/ДеревоНоменклатуры/Forms/ФормаОбработки/Ext/Form.xml' },
+  },
+  {
+    name: 'writeFile: ДеревоНоменклатуры form Module.bsl',
+    writeFile: 'DataProcessors/ДеревоНоменклатуры/Forms/ФормаОбработки/Ext/Form/Module.bsl',
+    content: `&НаСервере
+Процедура ПриСозданииНаСервере(Отказ, СтандартнаяОбработка)
+\tЗаполнитьУровень(Дерево.ПолучитьЭлементы(), Справочники.Номенклатура.ПустаяСсылка());
+КонецПроцедуры
+
+&НаСервере
+Процедура ЗаполнитьУровень(КоллекцияЭлементов, Родитель)
+\tЗапрос = Новый Запрос;
+\tЗапрос.Текст =
+\t\t"ВЫБРАТЬ
+\t\t|\tСсылка, ЭтоГруппа, Цена, Наименование
+\t\t|ИЗ
+\t\t|\tСправочник.Номенклатура
+\t\t|ГДЕ
+\t\t|\tРодитель = &Родитель
+\t\t|УПОРЯДОЧИТЬ ПО
+\t\t|\tЭтоГруппа УБЫВ, Наименование";
+\tЗапрос.УстановитьПараметр("Родитель", Родитель);
+\tВыборка = Запрос.Выполнить().Выбрать();
+\tПока Выборка.Следующий() Цикл
+\t\tНовыйУзел = КоллекцияЭлементов.Добавить();
+\t\tНовыйУзел.Номенклатура = Выборка.Ссылка;
+\t\tНовыйУзел.Цена = Выборка.Цена;
+\t\tЕсли Выборка.ЭтоГруппа Тогда
+\t\t\tЗаполнитьУровень(НовыйУзел.ПолучитьЭлементы(), Выборка.Ссылка);
+\t\tКонецЕсли;
+\tКонецЦикла;
+КонецПроцедуры
+`,
+  },
+
   // ── 4. DCS for report ──
   // Сначала добавляем макет ОсновнаяСхемаКомпоновкиДанных к отчёту (регистрируется
   // в Reports/ОстаткиТоваров.xml + автоматически выставляется MainDataCompositionSchema),
@@ -751,6 +827,7 @@ export const steps = [
         'InformationRegister.КурсыВалют',
         'Constant.ОсновнаяВалюта',
         'DataProcessor.ТестовыеОшибки',
+        'DataProcessor.ДеревоНоменклатуры',
       ],
     },
     args: { '-DefinitionFile': '{inputFile}', '-OutputDir': '{workDir}' },
@@ -771,6 +848,7 @@ export const steps = [
         'Document.ПриходнаяНакладная: Read View Add Update Delete Posting UnPosting',
         'InformationRegister.КурсыВалют: Read View Add Update Delete',
         'Report.ОстаткиТоваров: Use View',
+        'DataProcessor.ДеревоНоменклатуры: Use View',
       ],
     },
     args: { '-JsonPath': '{inputFile}', '-OutputDir': '{workDir}' },
