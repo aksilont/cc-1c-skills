@@ -484,8 +484,25 @@ export default {
   retries: 0,
   screenshot: 'on-failure',  // 'every-step' | 'off'
   record: false,
+
+  // Allure severity policy (опционально). Inverted map: уровень → [теги].
+  // Резолв см. §9 «Severity».
+  severity: {
+    critical: ['smoke', 'multi-context'],
+    minor:    ['recording'],
+    // blocker / trivial — необязательны, можно опустить
+  },
+  defaultSeverity: 'normal',  // если ничего не подошло
 };
 ```
+
+`severity` валидируется при загрузке конфига:
+- ключи — только из `blocker|critical|normal|minor|trivial`;
+- значение каждого ключа — массив тегов;
+- тег не может быть в двух bucket'ах одновременно (явная ошибка с указанием конфликта);
+- `defaultSeverity` — из стандартного набора.
+
+При нарушении любого правила раннер `die`-ает с понятным сообщением до запуска тестов.
 
 Кириллица в ID контекстов работает, но смешанный регистр затрудняет ergonomics
 (`testInfo.contexts.кладовщик.displayName` vs `testInfo.contexts.clerk.displayName`).
@@ -719,6 +736,21 @@ await step('Кладовщик проверяет статус', async () => {
 ```
 
 Скриншоты/видео копируются в `allure-results/` с уникальными именами.
+
+#### Авто-эмиссия label-ов
+
+Раннер всегда заполняет следующие labels:
+
+- **`tag`** — по одному label-у на каждый элемент `mod.tags[]`. Бесплатная фильтрация в Allure-дашборде.
+- **`suite`** — `dirname(t.file)`. Тесты в корне `testDir` идут под `'root'`, тесты в подкаталоге `sales/` — под `'sales'`. Это даёт левую группировку отчёта без ручной разметки.
+- **`severity`** — резолв в порядке приоритета:
+  1. `export const severity = 'critical'` в самом тесте (если задано и значение валидное);
+  2. иначе **max-rank** среди тегов теста (стандартные имена `blocker|critical|normal|minor|trivial` напрямую, либо через `config.severity`-маппинг);
+  3. иначе `config.defaultSeverity` или `'normal'`.
+  
+  Rank: `blocker(5) > critical(4) > normal(3) > minor(2) > trivial(1)`. Max-wins инвариантен к порядку тегов в `mod.tags`.
+
+Пример: `tags: ['smoke', 'recording']` + `severity: { critical: ['smoke'], minor: ['recording'] }` → severity = `critical` (5 > 2).
 
 ### JUnit XML (`--format=junit`)
 

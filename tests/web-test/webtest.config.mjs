@@ -20,4 +20,17 @@ export default {
   // isolation: 'window' — separate BrowserContext per slot, full cookie isolation,
   //   extension may not load (Playwright limitation). Use only when really needed.
   timeout: 60000,
+
+  // Allure severity policy: inverted map "уровень → теги, попадающие в этот уровень".
+  // Резолв (run.mjs:resolveSeverity):
+  //   1. explicit `export const severity` в тесте — выигрывает всегда;
+  //   2. иначе max-rank среди тегов теста (стандартное имя severity или маппинг ниже);
+  //   3. иначе `defaultSeverity`.
+  // Тег не может быть в двух bucket'ах одновременно — валидация при загрузке конфига.
+  severity: {
+    critical: ['smoke', 'multi-context'],
+    minor:    ['recording'],
+    // blocker / trivial — пустые, не используем
+  },
+  defaultSeverity: 'normal',
 };

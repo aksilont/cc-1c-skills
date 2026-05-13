@@ -26,6 +26,12 @@ import { randomUUID } from 'crypto';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SESSION_FILE = resolve(__dirname, '..', '.browser-session.json');
 
+// Allure severity policy. Declared early so buildSeverityIndex (called inside
+// cmdTest) can use these constants — top-level const are not hoisted, and
+// cmdTest is invoked synchronously below via `await cmdTest(rawArgs)`.
+const SEVERITY_RANK = { blocker: 5, critical: 4, normal: 3, minor: 2, trivial: 1 };
+const SEVERITY_LEVELS = Object.keys(SEVERITY_RANK);
+
 const [,, cmd, ...rawArgs] = process.argv;
 const flags = { noRecord: rawArgs.includes('--no-record') };
 const args = rawArgs.filter(a => !a.startsWith('--'));
@@ -401,6 +407,8 @@ async function cmdTest(rawArgs) {
     const mod = await import('file:///' + configPath.replace(/\\/g, '/'));
     config = mod.default || {};
   }
+  // Validate severity policy at config load (fail-fast on misconfig).
+  const severityIndex = buildSeverityIndex(config);
   // Build context registry: name → url. Supports config.contexts or single config.url / CLI url.
   // CLI url overrides default context's url.
   const contextSpecs = {}; // name → { url, isolation }
@@ -467,6 +475,7 @@ async function cmdTest(rawArgs) {
       param: undefined,
       context: mod.context || null,
       contexts: Array.isArray(mod.contexts) ? mod.contexts : null,
+      severity: typeof mod.severity === 'string' ? mod.severity : null,
     };
     if (base.only) hasOnly = true;
     if (Array.isArray(mod.params) && mod.params.length) {
@@ -701,7 +710,7 @@ async function cmdTest(rawArgs) {
             try { await browser.stopRecording(); } catch {}
           }
           const dur = elapsed(t0);
-          testResult = { name: t.name, file: t.file, tags: t.tags, contexts: testContextNames, status: 'passed', duration: dur, attempts: attempt, start: t0, stop: Date.now(), steps, output: output.join('\n'), error: null, screenshot: null, video: videoFile };
+          testResult = { name: t.name, file: t.file, tags: t.tags, contexts: testContextNames, severity: t.severity, status: 'passed', duration: dur, attempts: attempt, start: t0, stop: Date.now(), steps, output: output.join('\n'), error: null, screenshot: null, video: videoFile };
           lastError = null;
           break;
 
@@ -735,7 +744,7 @@ async function cmdTest(rawArgs) {
           }
           lastError = { message: e.message, step: e.onecError?.step, screenshot: shotFile };
           const dur = elapsed(t0);
-          testResult = { name: t.name, file: t.file, tags: t.tags, contexts: testContextNames, status: 'failed', duration: dur, attempts: attempt, start: t0, stop: Date.now(), steps, output: output.join('\n'), error: lastError, screenshot: shotFile, video: videoFile };
+          testResult = { name: t.name, file: t.file, tags: t.tags, contexts: testContextNames, severity: t.severity, status: 'failed', duration: dur, attempts: attempt, start: t0, stop: Date.now(), steps, output: output.join('\n'), error: lastError, screenshot: shotFile, video: videoFile };
         }
       }
 
@@ -811,7 +820,7 @@ async function cmdTest(rawArgs) {
   out(report);
 
   if (opts.format === 'allure') {
-    writeAllure(results, reportDir);
+    writeAllure(results, reportDir, severityIndex);
   } else if (opts.format === 'junit') {
     writeFileSync(resolve(opts.report), buildJUnit(report, testDir));
   } else if (opts.report) {
@@ -821,10 +830,15 @@ async function cmdTest(rawArgs) {
   if (failCount > 0) process.exit(1);
 }
 
-function writeAllure(results, reportDir) {
+function writeAllure(results, reportDir, severityIndex) {
   for (const tr of results) {
     if (tr.status === 'skipped') continue; // Allure ignores skipped without start/stop
     const uuid = randomUUID();
+    // suite: dirname(t.file) даёт автогруппировку отчёта по подкаталогам.
+    // Плоский слой тестов в корне группируется под 'root'.
+    const suite = dirname(tr.file);
+    const suiteLabel = (suite && suite !== '.') ? suite : 'root';
+    const severity = resolveSeverity(tr, severityIndex);
     const out = {
       uuid,
       name: tr.name,
@@ -833,7 +847,11 @@ function writeAllure(results, reportDir) {
       stage: 'finished',
       start: tr.start,
       stop: tr.stop,
-      labels: (tr.tags || []).map(t => ({ name: 'tag', value: t })),
+      labels: [
+        ...(tr.tags || []).map(t => ({ name: 'tag', value: t })),
+        { name: 'suite', value: suiteLabel },
+        { name: 'severity', value: severity },
+      ],
       steps: (tr.steps || []).map(allureStep),
       attachments: [
         ...(tr.screenshot ? [{ name: 'Screenshot on failure', source: basename(tr.screenshot), type: 'image/png' }] : []),
@@ -961,6 +979,71 @@ function formatDuration(seconds) {
   const m = Math.floor(seconds / 60);
   const s = Math.round((seconds - m * 60) * 10) / 10;
   return `${m}m ${s}s`;
+}
+
+// ============================================================
+// Severity (Allure label policy) — constants live at module top.
+// ============================================================
+
+/**
+ * Validate config.severity (inverted map: severity → [tags]) at config load time.
+ * Returns:
+ *   - tagToSeverity: Map<tag, severity>  (precomputed lookup for the resolver)
+ *   - defaultSeverity: string (validated, defaults to 'normal')
+ * Throws (via die) on invalid keys, invalid default, or duplicate tag across buckets.
+ */
+function buildSeverityIndex(config) {
+  const tagToSeverity = new Map();
+  const sev = config.severity || {};
+  if (typeof sev !== 'object' || Array.isArray(sev)) {
+    die(`config.severity must be an object, got ${typeof sev}`);
+  }
+  for (const [level, tags] of Object.entries(sev)) {
+    if (!SEVERITY_LEVELS.includes(level)) {
+      die(`config.severity: unknown level "${level}". Allowed: ${SEVERITY_LEVELS.join('|')}`);
+    }
+    if (!Array.isArray(tags)) {
+      die(`config.severity.${level} must be an array of tag names, got ${typeof tags}`);
+    }
+    for (const tag of tags) {
+      if (tagToSeverity.has(tag)) {
+        die(`config.severity: tag "${tag}" listed under both "${tagToSeverity.get(tag)}" and "${level}" — pick one`);
+      }
+      tagToSeverity.set(tag, level);
+    }
+  }
+  const def = config.defaultSeverity || 'normal';
+  if (!SEVERITY_LEVELS.includes(def)) {
+    die(`config.defaultSeverity: "${def}" is not a valid level. Allowed: ${SEVERITY_LEVELS.join('|')}`);
+  }
+  return { tagToSeverity, defaultSeverity: def };
+}
+
+/**
+ * Resolve a test's severity. Precedence:
+ *   1. explicit `export const severity` from the test module
+ *   2. max-rank severity found among tags (either standard severity name, or mapped via config)
+ *   3. defaultSeverity from config (or 'normal' if not set)
+ * Returns one of SEVERITY_LEVELS.
+ */
+function resolveSeverity(t, severityIndex) {
+  if (t.severity) {
+    if (!SEVERITY_LEVELS.includes(t.severity)) {
+      // Не валим тест — просто игнорируем некорректное значение, дефолтим.
+      return severityIndex.defaultSeverity;
+    }
+    return t.severity;
+  }
+  let best = null;
+  for (const tag of t.tags || []) {
+    let candidate = null;
+    if (SEVERITY_LEVELS.includes(tag)) candidate = tag;
+    else if (severityIndex.tagToSeverity.has(tag)) candidate = severityIndex.tagToSeverity.get(tag);
+    if (candidate && (best === null || SEVERITY_RANK[candidate] > SEVERITY_RANK[best])) {
+      best = candidate;
+    }
+  }
+  return best || severityIndex.defaultSeverity;
 }
 
 
