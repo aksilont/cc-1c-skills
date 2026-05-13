@@ -1,4 +1,4 @@
-// _hooks.mjs v0.3 — автономный тестовый стенд для web-test + testlevel-хуки
+// _hooks.mjs v0.4 — автономный тестовый стенд для web-test + testlevel-хуки + title slides
 //
 // `prepare()` поднимает изолированный стенд по smart-логике:
 //   1) Если нужно пересоздавать БД (config-rebuild или --reload-data) — web-stop
@@ -324,9 +324,31 @@ export async function afterAll(_ctx) {
   _state.events.push('afterAll');
 }
 
+// Длительность показа title slide перед телом теста (секунды). Эмпирически
+// 1.5с хватает чтобы в записанном видео слайд успел зацепиться кадром,
+// и не слишком долго на тестах вроде 14-routing (~2.5с целиком).
+const TITLE_SLIDE_SEC = 1.5;
+
 export async function beforeEach(ctx) {
   _state.beforeEach++;
   _state.events.push(`beforeEach:${ctx.testInfo?.file || '?'}`);
+
+  // M7.5: title slide для `--record`-прогонов. Под обычным регрессом
+  // (isRecording === false) пропускаем — лишние ~1.5s × N тестов
+  // не нужны.
+  if (ctx.isRecording?.()) {
+    const info = ctx.testInfo;
+    const primary = info.contexts?.[info.primaryContext];
+    const subtitle = primary?.displayName || '';
+    try {
+      await ctx.showTitleSlide(info.name, { subtitle });
+      await ctx.wait(TITLE_SLIDE_SEC);
+      await ctx.hideTitleSlide();
+    } catch {
+      // Не валим тест из-за оформления — recorder/page-state могут
+      // не сложиться в редких сценариях (race на старте контекста).
+    }
+  }
 }
 
 export async function afterEach(ctx) {
