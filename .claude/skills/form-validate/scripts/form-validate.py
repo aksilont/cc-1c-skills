@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# form-validate v1.5 — Validate 1C managed form
+# form-validate v1.6 — Validate 1C managed form
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 
 import argparse
@@ -374,6 +374,12 @@ def main():
 
             data_path = (dp_node.text or "").strip()
             if not data_path:
+                continue
+
+            # Opaque platform-internal DataPath shapes — not validatable from Form.xml alone:
+            #   - bare numeric (e.g. "10", "1000003") — internal index
+            #   - "N/M:<uuid>" — metadata reference by UUID
+            if re.match(r'^\d+$', data_path) or re.match(r'^\d+/\d+:[0-9a-fA-F-]+$', data_path):
                 continue
 
             path_checked += 1

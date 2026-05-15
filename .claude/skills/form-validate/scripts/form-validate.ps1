@@ -1,4 +1,4 @@
-﻿# form-validate v1.5 — Validate 1C managed form
+﻿# form-validate v1.6 — Validate 1C managed form
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -365,6 +365,13 @@ if (-not $stopped) {
 
 		$dataPath = $dpNode.InnerText.Trim()
 		if (-not $dataPath) { continue }
+
+		# Opaque platform-internal DataPath shapes — not validatable from Form.xml alone:
+		#   - bare numeric (e.g. "10", "1000003") — internal index
+		#   - "N/M:<uuid>" — metadata reference by UUID
+		if ($dataPath -match '^\d+$' -or $dataPath -match '^\d+/\d+:[0-9a-fA-F-]+$') {
+			continue
+		}
 
 		$pathChecked++
 
