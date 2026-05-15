@@ -1,4 +1,4 @@
-﻿# skd-edit v1.16 — Atomic 1C DCS editor
+﻿# skd-edit v1.17 — Atomic 1C DCS editor
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -238,14 +238,25 @@ function Read-FieldProperties($fieldEl) {
 function Parse-TotalShorthand {
 	param([string]$s)
 
+	# "DataPath: Func" or "DataPath: Func(expr)" or "DataPath: ИмяРесурса" (identity)
 	$parts = $s -split ':', 2
 	$dataPath = $parts[0].Trim()
 	$funcPart = $parts[1].Trim()
 
+	# Known DCS aggregate functions (ru + en)
+	$aggFuncs = @('Сумма','Количество','Минимум','Максимум','Среднее',
+	              'Sum','Count','Min','Max','Avg',
+	              'Minimum','Maximum','Average')
+
 	if ($funcPart -match '^\w+\(') {
+		# Already has expression form: Func(expr)
 		return @{ dataPath = $dataPath; expression = $funcPart }
-	} else {
+	} elseif ($funcPart -in $aggFuncs) {
+		# Short: Func → Func(DataPath)
 		return @{ dataPath = $dataPath; expression = "$funcPart($dataPath)" }
+	} else {
+		# Identity or custom expression — use as-is
+		return @{ dataPath = $dataPath; expression = $funcPart }
 	}
 }
 

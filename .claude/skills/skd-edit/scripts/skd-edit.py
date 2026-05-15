@@ -1,4 +1,4 @@
-# skd-edit v1.16 — Atomic 1C DCS editor (Python port)
+# skd-edit v1.17 — Atomic 1C DCS editor (Python port)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 import argparse
 import os
@@ -250,13 +250,21 @@ def read_field_properties(field_el):
 
 
 def parse_total_shorthand(s):
+    # "DataPath: Func" or "DataPath: Func(expr)" or "DataPath: ИмяРесурса" (identity)
     parts = s.split(":", 1)
     data_path = parts[0].strip()
     func_part = parts[1].strip()
+
+    agg_funcs = {'Сумма', 'Количество', 'Минимум', 'Максимум', 'Среднее',
+                 'Sum', 'Count', 'Min', 'Max', 'Avg',
+                 'Minimum', 'Maximum', 'Average'}
+
     if re.match(r'^\w+\(', func_part):
         return {"dataPath": data_path, "expression": func_part}
-    else:
+    elif func_part in agg_funcs:
         return {"dataPath": data_path, "expression": f"{func_part}({data_path})"}
+    else:
+        return {"dataPath": data_path, "expression": func_part}
 
 
 def parse_calc_shorthand(s):
