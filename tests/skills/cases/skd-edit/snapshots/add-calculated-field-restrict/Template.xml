@@ -42,7 +42,7 @@
 	</dataSet>
 	<calculatedField>
 		<dataPath>Служебное</dataPath>
-		<expression>&quot;&quot;</expression>
+		<expression>""</expression>
 		<useRestriction>
 			<condition>true</condition>
 			<order>true</order>

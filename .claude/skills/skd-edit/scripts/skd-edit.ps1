@@ -1,4 +1,4 @@
-﻿# skd-edit v1.21 — Atomic 1C DCS editor
+﻿# skd-edit v1.22 — Atomic 1C DCS editor
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -50,7 +50,7 @@ $resolvedPath = (Resolve-Path $TemplatePath).Path
 
 function Esc-Xml {
 	param([string]$s)
-	return $s.Replace('&','&amp;').Replace('<','&lt;').Replace('>','&gt;').Replace('"','&quot;')
+	return $s.Replace('&','&amp;').Replace('<','&lt;').Replace('>','&gt;')
 }
 
 function Resolve-QueryValue {
@@ -3563,19 +3563,11 @@ if ($script:RawRootOpening) {
 	$content = [regex]::Replace($content, '<DataCompositionSchema\b[^>]*>', { param($m) $script:RawRootOpening })
 }
 
-#   (2) re-escape `"` to &quot; inside <query>/<expression> text content (1C-style).
-#       Scope is anchored to those tag names so xsi:type="..." attribute quotes are untouched.
-$content = [regex]::Replace(
-	$content,
-	'(<(?:\w+:)?(?:query|expression)\b[^>]*>)([\s\S]*?)(</(?:\w+:)?(?:query|expression)>)',
-	{ param($m) $m.Groups[1].Value + $m.Groups[2].Value.Replace('"', '&quot;') + $m.Groups[3].Value }
-)
-
-#   (3) normalize self-closing tags: `.NET XmlDocument` adds a space before `/>`
+#   (2) normalize self-closing tags: `.NET XmlDocument` adds a space before `/>`
 #       (`<foo bar="x" />`) but 1C-Designer writes `<foo bar="x"/>`. Strip the space.
 $content = [regex]::Replace($content, '(?<=\S) />', '/>')
 
-#   (4) normalize line endings to match source — operations may mix LF (from new
+#   (3) normalize line endings to match source — operations may mix LF (from new
 #       fragments) with whatever the source used (CRLF on Windows, LF on Linux/git).
 if ($script:LineEnding -eq "`r`n") {
 	$content = $content -replace '(?<!\r)\n', "`r`n"

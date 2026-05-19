@@ -1,4 +1,4 @@
-# skd-edit v1.21 — Atomic 1C DCS editor (Python port)
+# skd-edit v1.22 — Atomic 1C DCS editor (Python port)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 import argparse
 import os
@@ -80,7 +80,7 @@ def local_name(node):
 # ── helpers ──────────────────────────────────────────────────
 
 def esc_xml(s):
-    return s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
+    return s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
 
 def resolve_query_value(val, base_dir):
@@ -2946,16 +2946,9 @@ xml_bytes = xml_bytes.replace(b"<?xml version='1.0' encoding='UTF-8'?>", b'<?xml
 # Format-preserve post-processing (mirrors PS path):
 #   (1) restore the original raw <DataCompositionSchema ...> opening tag — lxml collapses
 #       multi-line xmlns into one line.
-#   (2) re-escape `"` to &quot; inside <query>/<expression> text content; scope anchored
-#       to those tag names so xsi:type="..." attribute quotes are untouched.
 xml_text = xml_bytes.decode("utf-8")
 if raw_root_opening:
     xml_text = re.sub(r"<DataCompositionSchema\b[^>]*>", lambda m: raw_root_opening, xml_text, count=1, flags=re.DOTALL)
-xml_text = re.sub(
-    r"(<(?:\w+:)?(?:query|expression)\b[^>]*>)([\s\S]*?)(</(?:\w+:)?(?:query|expression)>)",
-    lambda m: m.group(1) + m.group(2).replace('"', '&quot;') + m.group(3),
-    xml_text,
-)
 # Normalize self-closing tags: lxml writes `<foo bar="x"/>` already (no space), but be
 # defensive — strip any space before `/>` so PS and PY ports stay byte-equivalent.
 xml_text = re.sub(r"(?<=\S) />", "/>", xml_text)
