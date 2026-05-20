@@ -1,4 +1,4 @@
-# skd-edit v1.23 — Atomic 1C DCS editor (Python port)
+# skd-edit v1.24 — Atomic 1C DCS editor (Python port)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 import argparse
 import os
@@ -1524,6 +1524,118 @@ def set_or_create_child_element_with_attr(parent, ln, ns_uri, value, xsi_type, i
             insert_before_element(parent, node, None, indent)
 
 
+def get_all_data_sets():
+    return [c for c in xml_doc
+            if isinstance(c.tag, str) and local_name(c) == "dataSet" and etree.QName(c.tag).namespace == SCH_NS]
+
+
+def normalize_line_endings(s):
+    if s is None:
+        return s
+    return s.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def escape_whitespace(s):
+    out = []
+    for ch in s:
+        code = ord(ch)
+        if ch == "\n": out.append("\\n")
+        elif ch == "\r": out.append("\\r")
+        elif ch == "\t": out.append("\\t")
+        elif code < 32 or code == 0xA0 or (0x2000 <= code <= 0x200F) or code == 0xFEFF:
+            out.append(f"\\u{code:04X}")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def collapse_whitespace(s):
+    return re.sub(r"[\s ]+", " ", s).strip()
+
+
+def find_longest_prefix_match(haystack, needle):
+    """Binary search: largest L such that needle[:L] is a substring of haystack."""
+    if not needle or not haystack:
+        return (0, -1)
+    first_idx = haystack.find(needle[0])
+    if first_idx < 0:
+        return (0, -1)
+    lo, hi = 1, len(needle)
+    best_len, best_off = 1, first_idx
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        idx = haystack.find(needle[:mid])
+        if idx >= 0:
+            best_len, best_off = mid, idx
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return (best_len, best_off)
+
+
+def format_patch_query_not_found(old_str, query_text, current_ds_node, ds_name):
+    lines = [f"Substring not found in query of dataset '{ds_name}'."]
+
+    # Step 1 — cross-dataset probe
+    for ds in get_all_data_sets():
+        if ds is current_ds_node:
+            continue
+        q = find_first_element(ds, ["query"], SCH_NS)
+        if q is None:
+            continue
+        qt = normalize_line_endings(q.text or "")
+        if old_str in qt:
+            other = get_data_set_name(ds)
+            lines.append(f"Found in dataset '{other}' instead — wrong -DataSet?")
+            return "\n".join(lines)
+
+    # Step 2 — tolerant probe
+    norm_needle = collapse_whitespace(old_str)
+    norm_hay = collapse_whitespace(query_text)
+    tolerant = bool(norm_needle) and (norm_needle in norm_hay)
+
+    # Step 3 — divergence
+    matched, off = find_longest_prefix_match(query_text, old_str)
+    divergence = None
+    if 0 < matched < len(old_str):
+        query_pos = off + matched
+        before_len = min(20, matched)
+        divergence = {
+            "matched": matched,
+            "total": len(old_str),
+            "before": old_str[matched - before_len:matched],
+            "search_char": old_str[matched],
+            "query_char": query_text[query_pos] if query_pos < len(query_text) else None,
+        }
+
+    if tolerant:
+        lines.append("Not found exactly, but would match with whitespace normalized (tabs/spaces/NBSP).")
+        if divergence:
+            lines.append(f"Diverged at offset {divergence['matched']} of {divergence['total']}:")
+            lines.append(f"  before:    '{escape_whitespace(divergence['before'])}'")
+            sc = divergence['search_char']
+            lines.append(f"  in search: '{escape_whitespace(sc)}' (U+{ord(sc):04X})")
+            qc = divergence['query_char']
+            if qc is not None:
+                lines.append(f"  in query:  '{escape_whitespace(qc)}' (U+{ord(qc):04X})")
+        return "\n".join(lines)
+
+    if matched == 0:
+        lines.append(f"No common prefix with query. Check -DataSet (current: '{ds_name}').")
+        return "\n".join(lines)
+
+    lines.append(f"Matched first {divergence['matched']} of {divergence['total']} chars, then diverged:")
+    lines.append(f"  before:    '{escape_whitespace(divergence['before'])}'")
+    sc = divergence['search_char']
+    lines.append(f"  in search: '{escape_whitespace(sc)}' (U+{ord(sc):04X})")
+    qc = divergence['query_char']
+    if qc is not None:
+        lines.append(f"  in query:  '{escape_whitespace(qc)}' (U+{ord(qc):04X})")
+    else:
+        lines.append("  in query:  (end of query)")
+    return "\n".join(lines)
+
+
 def resolve_data_set():
     root_el = xml_doc
 
@@ -2255,13 +2367,13 @@ elif operation == "patch-query":
         if sep_idx < 0:
             print("patch-query value must contain ' => ' separator: old => new", file=sys.stderr)
             sys.exit(1)
-        old_str = val[:sep_idx]
-        new_str = val[sep_idx + 4:]
-        query_text = query_el.text or ""
+        old_str = normalize_line_endings(val[:sep_idx])
+        new_str = normalize_line_endings(val[sep_idx + 4:])
+        query_text = normalize_line_endings(query_el.text or "")
 
         count = query_text.count(old_str)
         if count == 0:
-            print(f"Substring not found in query of dataset '{ds_name}': {old_str}", file=sys.stderr)
+            print(format_patch_query_not_found(old_str, query_text, ds_node, ds_name), file=sys.stderr)
             sys.exit(1)
         if once and count != 1:
             print(f"@once: expected 1 occurrence of '{old_str}' in dataset '{ds_name}', found {count}", file=sys.stderr)

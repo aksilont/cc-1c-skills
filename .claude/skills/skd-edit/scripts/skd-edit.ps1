@@ -1,4 +1,4 @@
-﻿# skd-edit v1.23 — Atomic 1C DCS editor
+﻿# skd-edit v1.24 — Atomic 1C DCS editor
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -1729,6 +1729,131 @@ function Set-OrCreateChildElementWithAttr($parent, [string]$localName, [string]$
 	}
 }
 
+function Get-AllDataSets {
+	$schNs = "http://v8.1c.ru/8.1/data-composition-system/schema"
+	$root = $xmlDoc.DocumentElement
+	$result = @()
+	foreach ($child in $root.ChildNodes) {
+		if ($child.NodeType -eq 'Element' -and $child.LocalName -eq 'dataSet' -and $child.NamespaceURI -eq $schNs) {
+			$result += $child
+		}
+	}
+	return ,$result
+}
+
+function Normalize-LineEndings([string]$s) {
+	if ($null -eq $s) { return $s }
+	return $s.Replace("`r`n", "`n").Replace("`r", "`n")
+}
+
+function Escape-Whitespace([string]$s) {
+	$sb = New-Object System.Text.StringBuilder
+	foreach ($c in $s.ToCharArray()) {
+		$code = [int]$c
+		if ($c -eq "`n") { [void]$sb.Append('\n') }
+		elseif ($c -eq "`r") { [void]$sb.Append('\r') }
+		elseif ($c -eq "`t") { [void]$sb.Append('\t') }
+		elseif ($code -lt 32 -or $code -eq 0xA0 -or ($code -ge 0x2000 -and $code -le 0x200F) -or $code -eq 0xFEFF) {
+			[void]$sb.AppendFormat('\u{0:X4}', $code)
+		} else {
+			[void]$sb.Append($c)
+		}
+	}
+	return $sb.ToString()
+}
+
+function Collapse-Whitespace([string]$s) {
+	return ([regex]::Replace($s, "[\s ]+", " ")).Trim()
+}
+
+function Find-LongestPrefixMatch([string]$haystack, [string]$needle) {
+	# Binary search: largest L such that needle.Substring(0, L) is a substring of haystack.
+	# Monotonic — if length L matches at position P, then length L-1 (prefix) also matches at P.
+	if ($needle.Length -eq 0 -or $haystack.Length -eq 0) {
+		return @{ Length = 0; Offset = -1 }
+	}
+	if ($haystack.IndexOf([string]$needle[0]) -lt 0) {
+		return @{ Length = 0; Offset = -1 }
+	}
+	$lo = 1; $hi = $needle.Length
+	$bestLen = 1; $bestOffset = $haystack.IndexOf([string]$needle[0])
+	while ($lo -le $hi) {
+		$mid = [int](($lo + $hi) / 2)
+		$idx = $haystack.IndexOf($needle.Substring(0, $mid))
+		if ($idx -ge 0) { $bestLen = $mid; $bestOffset = $idx; $lo = $mid + 1 }
+		else { $hi = $mid - 1 }
+	}
+	return @{ Length = $bestLen; Offset = $bestOffset }
+}
+
+function Format-PatchQueryNotFound([string]$oldStr, [string]$queryText, $currentDsNode, [string]$dsName) {
+	$schNs = "http://v8.1c.ru/8.1/data-composition-system/schema"
+	$lines = @("Substring not found in query of dataset '$dsName'.")
+
+	# Step 1 — cross-dataset probe
+	foreach ($ds in (Get-AllDataSets)) {
+		if ($ds -eq $currentDsNode) { continue }
+		$q = Find-FirstElement $ds @("query") $schNs
+		if (-not $q) { continue }
+		$qt = Normalize-LineEndings $q.InnerText
+		if ($qt.Contains($oldStr)) {
+			$otherName = Get-DataSetName $ds
+			$lines += "Found in dataset '$otherName' instead — wrong -DataSet?"
+			return ($lines -join "`n")
+		}
+	}
+
+	# Step 2 — tolerant probe (whitespace + NBSP collapsed)
+	$normNeedle = Collapse-Whitespace $oldStr
+	$normHay = Collapse-Whitespace $queryText
+	$tolerant = ($normNeedle.Length -gt 0 -and $normHay.Contains($normNeedle))
+
+	# Step 3 — prefix divergence (used by both Step 2 reporting and standalone Step 3)
+	$prefix = Find-LongestPrefixMatch -haystack $queryText -needle $oldStr
+	$divergence = $null
+	if ($prefix.Length -gt 0 -and $prefix.Length -lt $oldStr.Length) {
+		$queryPos = $prefix.Offset + $prefix.Length
+		$searchChar = $oldStr[$prefix.Length]
+		$beforeLen = [Math]::Min(20, $prefix.Length)
+		$before = $oldStr.Substring($prefix.Length - $beforeLen, $beforeLen)
+		$divergence = [ordered]@{
+			matched = $prefix.Length
+			total = $oldStr.Length
+			before = $before
+			searchChar = $searchChar
+			queryChar = $(if ($queryPos -lt $queryText.Length) { $queryText[$queryPos] } else { $null })
+		}
+	}
+
+	if ($tolerant) {
+		$lines += "Not found exactly, but would match with whitespace normalized (tabs/spaces/NBSP)."
+		if ($divergence) {
+			$lines += "Diverged at offset $($divergence.matched) of $($divergence.total):"
+			$lines += "  before:    '$(Escape-Whitespace $divergence.before)'"
+			$lines += "  in search: '$(Escape-Whitespace ([string]$divergence.searchChar))' (U+$('{0:X4}' -f [int]$divergence.searchChar))"
+			if ($null -ne $divergence.queryChar) {
+				$lines += "  in query:  '$(Escape-Whitespace ([string]$divergence.queryChar))' (U+$('{0:X4}' -f [int]$divergence.queryChar))"
+			}
+		}
+		return ($lines -join "`n")
+	}
+
+	# Step 3 standalone
+	if ($prefix.Length -eq 0) {
+		$lines += "No common prefix with query. Check -DataSet (current: '$dsName')."
+		return ($lines -join "`n")
+	}
+	$lines += "Matched first $($divergence.matched) of $($divergence.total) chars, then diverged:"
+	$lines += "  before:    '$(Escape-Whitespace $divergence.before)'"
+	$lines += "  in search: '$(Escape-Whitespace ([string]$divergence.searchChar))' (U+$('{0:X4}' -f [int]$divergence.searchChar))"
+	if ($null -ne $divergence.queryChar) {
+		$lines += "  in query:  '$(Escape-Whitespace ([string]$divergence.queryChar))' (U+$('{0:X4}' -f [int]$divergence.queryChar))"
+	} else {
+		$lines += "  in query:  (end of query)"
+	}
+	return ($lines -join "`n")
+}
+
 function Resolve-DataSet {
 	$schNs = "http://v8.1c.ru/8.1/data-composition-system/schema"
 	$root = $xmlDoc.DocumentElement
@@ -2697,13 +2822,14 @@ switch ($Operation) {
 				Write-Error "patch-query value must contain ' => ' separator: old => new"
 				exit 1
 			}
-			$oldStr = $val.Substring(0, $sepIdx)
-			$newStr = $val.Substring($sepIdx + 4)
-			$queryText = $queryEl.InnerText
+			$oldStr = Normalize-LineEndings $val.Substring(0, $sepIdx)
+			$newStr = Normalize-LineEndings $val.Substring($sepIdx + 4)
+			$queryText = Normalize-LineEndings $queryEl.InnerText
 
 			$count = ([regex]::Matches($queryText, [regex]::Escape($oldStr))).Count
 			if ($count -eq 0) {
-				Write-Error "Substring not found in query of dataset '$dsName': $oldStr"
+				$diag = Format-PatchQueryNotFound $oldStr $queryText $dsNode $dsName
+				Write-Error $diag
 				exit 1
 			}
 			if ($once -and $count -ne 1) {
