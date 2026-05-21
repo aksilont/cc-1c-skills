@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# skd-compile v1.33 — Compile 1C DCS from JSON
+# skd-compile v1.34 — Compile 1C DCS from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 import argparse
 import json
@@ -627,10 +627,10 @@ def emit_field(lines, field_def, indent):
         # Parse restrictions
         if field_def.get('restrict'):
             f['restrict'] = list(field_def['restrict'])
-        # Parse appearance
+        # Parse appearance (сохраняем значение как есть — может быть string или multilang dict)
         if field_def.get('appearance'):
             for k, v in field_def['appearance'].items():
-                f['appearance'][k] = str(v)
+                f['appearance'][k] = v
         if field_def.get('presentationExpression'):
             f['presentationExpression'] = str(field_def['presentationExpression'])
         # attrRestrict
@@ -714,13 +714,14 @@ def emit_field(lines, field_def, indent):
     if f.get('appearance') and len(f['appearance']) > 0:
         lines.append(f'{indent}\t<appearance>')
         for key, val in f['appearance'].items():
-            lines.append(f'{indent}\t\t<dcscor:item xsi:type="dcsset:SettingsParameterValue">')
-            lines.append(f'{indent}\t\t\t<dcscor:parameter>{esc_xml(key)}</dcscor:parameter>')
-            if key == '\u0413\u043e\u0440\u0438\u0437\u043e\u043d\u0442\u0430\u043b\u044c\u043d\u043e\u0435\u041f\u043e\u043b\u043e\u0436\u0435\u043d\u0438\u0435':
-                lines.append(f'{indent}\t\t\t<dcscor:value xsi:type="v8ui:HorizontalAlign">{esc_xml(val)}</dcscor:value>')
+            # \u0413\u043e\u0440\u0438\u0437\u043e\u043d\u0442\u0430\u043b\u044c\u043d\u043e\u0435\u041f\u043e\u043b\u043e\u0436\u0435\u043d\u0438\u0435 \u0442\u0440\u0435\u0431\u0443\u0435\u0442 \u0441\u043f\u0435\u0446\u0438\u0430\u043b\u044c\u043d\u043e\u0433\u043e xsi:type, \u043d\u0435 \u0441\u0442\u0440\u043e\u043a\u0430
+            if key == '\u0413\u043e\u0440\u0438\u0437\u043e\u043d\u0442\u0430\u043b\u044c\u043d\u043e\u0435\u041f\u043e\u043b\u043e\u0436\u0435\u043d\u0438\u0435' and not isinstance(val, dict):
+                lines.append(f'{indent}\t\t<dcscor:item xsi:type="dcsset:SettingsParameterValue">')
+                lines.append(f'{indent}\t\t\t<dcscor:parameter>{esc_xml(key)}</dcscor:parameter>')
+                lines.append(f'{indent}\t\t\t<dcscor:value xsi:type="v8ui:HorizontalAlign">{esc_xml(str(val))}</dcscor:value>')
+                lines.append(f'{indent}\t\t</dcscor:item>')
             else:
-                lines.append(f'{indent}\t\t\t<dcscor:value xsi:type="xs:string">{esc_xml(val)}</dcscor:value>')
-            lines.append(f'{indent}\t\t</dcscor:item>')
+                emit_appearance_value(lines, key, val, f'{indent}\t\t')
         lines.append(f'{indent}\t</appearance>')
 
     # PresentationExpression
@@ -1686,23 +1687,31 @@ def emit_order(lines, items, indent, skip_auto=False):
 def emit_appearance_value(lines, key, val, indent):
     lines.append(f'{indent}<dcscor:item xsi:type="dcsset:SettingsParameterValue">')
 
-    if isinstance(val, dict) and val.get('use') is False:
-        lines.append(f'{indent}\t<dcscor:use>false</dcscor:use>')
-        lines.append(f'{indent}\t<dcscor:parameter>{esc_xml(key)}</dcscor:parameter>')
-        actual_val = str(val.get('value', ''))
-    else:
-        lines.append(f'{indent}\t<dcscor:parameter>{esc_xml(key)}</dcscor:parameter>')
-        actual_val = str(val)
+    # \u0420\u0430\u0441\u043f\u043e\u0437\u043d\u0430\u0451\u043c wrapper {use: false, value: ...} \u2014 \u043d\u043e \u0442\u043e\u043b\u044c\u043a\u043e \u0435\u0441\u043b\u0438 \u0435\u0441\u0442\u044c \u043e\u0431\u0430 \u043a\u043b\u044e\u0447\u0430.
+    use_wrapper = False
+    inner_val = val
+    if isinstance(val, dict) and 'use' in val and val['use'] is False and 'value' in val:
+        use_wrapper = True
+        inner_val = val['value']
 
-    # Auto-detect value type
-    if re.match(r'^(style|web|win):', actual_val):
-        lines.append(f'{indent}\t<dcscor:value xsi:type="v8ui:Color">{esc_xml(actual_val)}</dcscor:value>')
-    elif actual_val == 'true' or actual_val == 'false':
-        lines.append(f'{indent}\t<dcscor:value xsi:type="xs:boolean">{actual_val}</dcscor:value>')
-    elif key in ('\u0422\u0435\u043a\u0441\u0442', '\u0417\u0430\u0433\u043e\u043b\u043e\u0432\u043e\u043a', '\u0424\u043e\u0440\u043c\u0430\u0442'):
-        emit_mltext(lines, f'{indent}\t', 'dcscor:value', actual_val)
+    if use_wrapper:
+        lines.append(f'{indent}\t<dcscor:use>false</dcscor:use>')
+    lines.append(f'{indent}\t<dcscor:parameter>{esc_xml(key)}</dcscor:parameter>')
+
+    # Multilang dict ({"ru": "...", "en": "..."}) \u2192 LocalStringType \u043d\u0435\u0437\u0430\u0432\u0438\u0441\u0438\u043c\u043e \u043e\u0442 \u043a\u043b\u044e\u0447\u0430.
+    if isinstance(inner_val, dict):
+        emit_mltext(lines, f'{indent}\t', 'dcscor:value', inner_val)
     else:
-        lines.append(f'{indent}\t<dcscor:value xsi:type="xs:string">{esc_xml(actual_val)}</dcscor:value>')
+        actual_val = str(inner_val) if inner_val is not None else ''
+        if re.match(r'^(style|web|win):', actual_val):
+            lines.append(f'{indent}\t<dcscor:value xsi:type="v8ui:Color">{esc_xml(actual_val)}</dcscor:value>')
+        elif actual_val == 'true' or actual_val == 'false':
+            lines.append(f'{indent}\t<dcscor:value xsi:type="xs:boolean">{actual_val}</dcscor:value>')
+        elif key in ('\u0422\u0435\u043a\u0441\u0442', '\u0417\u0430\u0433\u043e\u043b\u043e\u0432\u043e\u043a', '\u0424\u043e\u0440\u043c\u0430\u0442'):
+            # \u0421\u0442\u0440\u043e\u043a\u043e\u0432\u044b\u0435 \u043a\u043b\u044e\u0447\u0438 \u0442\u0440\u0430\u0434\u0438\u0446\u0438\u043e\u043d\u043d\u043e \u044d\u043c\u0438\u0442\u044f\u0442\u0441\u044f \u043a\u0430\u043a LocalStringType (\u0434\u0430\u0436\u0435 \u0435\u0441\u043b\u0438 \u0442\u043e\u043b\u044c\u043a\u043e ru).
+            emit_mltext(lines, f'{indent}\t', 'dcscor:value', actual_val)
+        else:
+            lines.append(f'{indent}\t<dcscor:value xsi:type="xs:string">{esc_xml(actual_val)}</dcscor:value>')
     lines.append(f'{indent}</dcscor:item>')
 
 

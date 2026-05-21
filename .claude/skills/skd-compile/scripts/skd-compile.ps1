@@ -1,4 +1,4 @@
-﻿# skd-compile v1.33 — Compile 1C DCS from JSON
+﻿# skd-compile v1.34 — Compile 1C DCS from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[string]$DefinitionFile,
@@ -827,10 +827,10 @@ function Emit-Field {
 		if ($fieldDef.restrict) {
 			$f.restrict = @($fieldDef.restrict)
 		}
-		# Parse appearance
+		# Parse appearance (сохраняем значение как есть — может быть string или multilang dict)
 		if ($fieldDef.appearance) {
 			foreach ($prop in $fieldDef.appearance.PSObject.Properties) {
-				$f.appearance[$prop.Name] = "$($prop.Value)"
+				$f.appearance[$prop.Name] = $prop.Value
 			}
 		}
 		if ($fieldDef.presentationExpression) {
@@ -935,14 +935,15 @@ function Emit-Field {
 		X "$indent`t<appearance>"
 		foreach ($key in $f.appearance.Keys) {
 			$val = $f.appearance[$key]
-			X "$indent`t`t<dcscor:item xsi:type=`"dcsset:SettingsParameterValue`">"
-			X "$indent`t`t`t<dcscor:parameter>$(Esc-Xml $key)</dcscor:parameter>"
-			if ($key -eq "ГоризонтальноеПоложение") {
-				X "$indent`t`t`t<dcscor:value xsi:type=`"v8ui:HorizontalAlign`">$(Esc-Xml $val)</dcscor:value>"
+			# ГоризонтальноеПоложение требует специального xsi:type (v8ui:HorizontalAlign), не строка
+			if ($key -eq "ГоризонтальноеПоложение" -and -not ($val -is [hashtable] -or $val -is [System.Collections.IDictionary] -or $val -is [PSCustomObject])) {
+				X "$indent`t`t<dcscor:item xsi:type=`"dcsset:SettingsParameterValue`">"
+				X "$indent`t`t`t<dcscor:parameter>$(Esc-Xml $key)</dcscor:parameter>"
+				X "$indent`t`t`t<dcscor:value xsi:type=`"v8ui:HorizontalAlign`">$(Esc-Xml "$val")</dcscor:value>"
+				X "$indent`t`t</dcscor:item>"
 			} else {
-				X "$indent`t`t`t<dcscor:value xsi:type=`"xs:string`">$(Esc-Xml $val)</dcscor:value>"
+				Emit-AppearanceValue -key $key -val $val -indent "$indent`t`t"
 			}
-			X "$indent`t`t</dcscor:item>"
 		}
 		X "$indent`t</appearance>"
 	}
@@ -2025,24 +2026,34 @@ function Emit-AppearanceValue {
 	param([string]$key, $val, [string]$indent)
 
 	X "$indent<dcscor:item xsi:type=`"dcsset:SettingsParameterValue`">"
-	if ($val -is [PSCustomObject] -and $val.use -ne $null -and $val.use -eq $false) {
-		X "$indent`t<dcscor:use>false</dcscor:use>"
-		X "$indent`t<dcscor:parameter>$(Esc-Xml $key)</dcscor:parameter>"
-		$actualVal = "$($val.value)"
-	} else {
-		X "$indent`t<dcscor:parameter>$(Esc-Xml $key)</dcscor:parameter>"
-		$actualVal = "$val"
+
+	# Распознаём wrapper {use: false, value: ...} (необходимо отличать от multilang dict).
+	$useWrapper = $false
+	$innerVal = $val
+	if ($val -is [PSCustomObject] -and $val.PSObject.Properties['use'] -and $val.use -eq $false -and $val.PSObject.Properties['value']) {
+		$useWrapper = $true
+		$innerVal = $val.value
 	}
 
-	# Auto-detect value type
-	if ($actualVal -match '^(style|web|win):') {
-		X "$indent`t<dcscor:value xsi:type=`"v8ui:Color`">$(Esc-Xml $actualVal)</dcscor:value>"
-	} elseif ($actualVal -eq "true" -or $actualVal -eq "false") {
-		X "$indent`t<dcscor:value xsi:type=`"xs:boolean`">$actualVal</dcscor:value>"
-	} elseif ($key -eq "Текст" -or $key -eq "Заголовок" -or $key -eq "Формат") {
-		Emit-MLText -tag "dcscor:value" -text $actualVal -indent "$indent`t"
+	if ($useWrapper) { X "$indent`t<dcscor:use>false</dcscor:use>" }
+	X "$indent`t<dcscor:parameter>$(Esc-Xml $key)</dcscor:parameter>"
+
+	# Multilang dict ({"ru": "...", "en": "..."}) → LocalStringType независимо от ключа.
+	$isMultilang = ($innerVal -is [hashtable]) -or ($innerVal -is [System.Collections.IDictionary]) -or ($innerVal -is [PSCustomObject])
+	if ($isMultilang) {
+		Emit-MLText -tag "dcscor:value" -text $innerVal -indent "$indent`t"
 	} else {
-		X "$indent`t<dcscor:value xsi:type=`"xs:string`">$(Esc-Xml $actualVal)</dcscor:value>"
+		$actualVal = "$innerVal"
+		if ($actualVal -match '^(style|web|win):') {
+			X "$indent`t<dcscor:value xsi:type=`"v8ui:Color`">$(Esc-Xml $actualVal)</dcscor:value>"
+		} elseif ($actualVal -eq "true" -or $actualVal -eq "false") {
+			X "$indent`t<dcscor:value xsi:type=`"xs:boolean`">$actualVal</dcscor:value>"
+		} elseif ($key -eq "Текст" -or $key -eq "Заголовок" -or $key -eq "Формат") {
+			# Строковые ключи, традиционно эмитятся как LocalStringType (даже если только ru).
+			Emit-MLText -tag "dcscor:value" -text $actualVal -indent "$indent`t"
+		} else {
+			X "$indent`t<dcscor:value xsi:type=`"xs:string`">$(Esc-Xml $actualVal)</dcscor:value>"
+		}
 	}
 	X "$indent</dcscor:item>"
 }
