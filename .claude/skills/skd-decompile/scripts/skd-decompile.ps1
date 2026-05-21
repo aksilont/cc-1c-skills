@@ -1,4 +1,4 @@
-﻿# skd-decompile v0.3 — Decompile 1C DCS Template.xml to JSON DSL (draft)
+﻿# skd-decompile v0.4 — Decompile 1C DCS Template.xml to JSON DSL (draft)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -38,7 +38,7 @@ $NS_SCHEMA = "http://v8.1c.ru/8.1/data-composition-system/schema"
 $NS_COM    = "http://v8.1c.ru/8.1/data-composition-system/common"
 $NS_COR    = "http://v8.1c.ru/8.1/data-composition-system/core"
 $NS_SET    = "http://v8.1c.ru/8.1/data-composition-system/settings"
-$NS_AT     = "http://v8.1c.ru/8.1/data-composition-system/areatemplate"
+$NS_AT     = "http://v8.1c.ru/8.1/data-composition-system/area-template"
 $NS_V8     = "http://v8.1c.ru/8.1/data/core"
 $NS_V8UI   = "http://v8.1c.ru/8.1/data/ui"
 $NS_XS     = "http://www.w3.org/2001/XMLSchema"
@@ -492,6 +492,302 @@ function Render-Parameter {
 	return $obj
 }
 
+# --- 3b. Built-in style fingerprints ---
+
+# Fingerprints for built-in styles (header/data/subheader/total).
+# Each is the set of "shape-defining" appearance items the style emits.
+# Width/Height/merge flags are excluded — they're per-cell.
+$script:builtinStyleFingerprints = @{
+	'header' = @{
+		ЦветФона                 = 'd8p1:ReportHeaderBackColor'
+		ЦветГраницы              = 'd8p1:ReportLineColor'
+		СтильГраницы             = 'None|0'
+		'СтильГраницы.Слева'     = 'Solid|1'
+		'СтильГраницы.Сверху'    = 'Solid|1'
+		'СтильГраницы.Справа'    = 'Solid|1'
+		'СтильГраницы.Снизу'     = 'Solid|1'
+		Шрифт                    = 'Arial|10|false|false|false|false'
+		ГоризонтальноеПоложение  = 'Center'
+		Размещение               = 'Wrap'
+	}
+	'data' = @{
+		ЦветФона                 = 'd8p1:ReportGroup1BackColor'
+		ЦветГраницы              = 'd8p1:ReportLineColor'
+		СтильГраницы             = 'None|0'
+		'СтильГраницы.Слева'     = 'Solid|1'
+		'СтильГраницы.Сверху'    = 'Solid|1'
+		'СтильГраницы.Справа'    = 'Solid|1'
+		'СтильГраницы.Снизу'     = 'Solid|1'
+		Шрифт                    = 'Arial|10|false|false|false|false'
+	}
+	'subheader' = @{
+		ЦветГраницы              = 'd8p1:ReportLineColor'
+		СтильГраницы             = 'None|0'
+		'СтильГраницы.Слева'     = 'Solid|1'
+		'СтильГраницы.Сверху'    = 'Solid|1'
+		'СтильГраницы.Справа'    = 'Solid|1'
+		'СтильГраницы.Снизу'     = 'Solid|1'
+		Шрифт                    = 'Arial|10|false|false|false|false'
+		ГоризонтальноеПоложение  = 'Center'
+	}
+	'total' = @{
+		ЦветГраницы              = 'd8p1:ReportLineColor'
+		СтильГраницы             = 'None|0'
+		'СтильГраницы.Слева'     = 'Solid|1'
+		'СтильГраницы.Сверху'    = 'Solid|1'
+		'СтильГраницы.Справа'    = 'Solid|1'
+		'СтильГраницы.Снизу'     = 'Solid|1'
+		Шрифт                    = 'Arial|10|false|false|false|false'
+	}
+}
+
+# Normalize an <dcsat:appearance> node to a hashtable of "shape" keys (excluding
+# per-cell items: widths, heights, merge flags, drilldown). Used for style matching.
+function Get-AppearanceFingerprint {
+	param($appNode)
+	$fp = @{}
+	if (-not $appNode) { return $fp }
+	# Top-level dcscor:item children
+	foreach ($it in $appNode.SelectNodes("dcscor:item", $ns)) {
+		$pName = Get-Text $it "dcscor:parameter"
+		$val = $it.SelectSingleNode("dcscor:value", $ns)
+		if (-not $pName -or -not $val) { continue }
+		# Skip per-cell keys
+		if ($pName -in @('МинимальнаяШирина','МаксимальнаяШирина','МинимальнаяВысота','ОбъединятьПоВертикали','ОбъединятьПоГоризонтали','Расшифровка')) { continue }
+		$valType = Get-LocalXsiType $val
+		switch ($valType) {
+			'Color'    { $fp[$pName] = $val.InnerText }
+			'Line'     {
+				$w = $val.GetAttribute("width")
+				$styleNode = $val.SelectSingleNode("v8ui:style", $ns)
+				$lineStyle = if ($styleNode) { $styleNode.InnerText } else { '' }
+				$fp[$pName] = "$lineStyle|$w"
+			}
+			'Font'     {
+				$face = $val.GetAttribute("faceName")
+				$h = $val.GetAttribute("height")
+				$b = $val.GetAttribute("bold")
+				$i = $val.GetAttribute("italic")
+				$u = $val.GetAttribute("underline")
+				$s = $val.GetAttribute("strikeout")
+				$fp[$pName] = "$face|$h|$b|$i|$u|$s"
+			}
+			default    { $fp[$pName] = $val.InnerText }
+		}
+		# Nested sub-items under СтильГраницы (left/top/right/bottom)
+		foreach ($sub in $it.SelectNodes("dcscor:item", $ns)) {
+			$subName = Get-Text $sub "dcscor:parameter"
+			$subVal = $sub.SelectSingleNode("dcscor:value", $ns)
+			if (-not $subName -or -not $subVal) { continue }
+			$subType = Get-LocalXsiType $subVal
+			if ($subType -eq 'Line') {
+				$w = $subVal.GetAttribute("width")
+				$styleNode = $subVal.SelectSingleNode("v8ui:style", $ns)
+				$lineStyle = if ($styleNode) { $styleNode.InnerText } else { '' }
+				$fp[$subName] = "$lineStyle|$w"
+			}
+		}
+	}
+	# Translate d8p1: colors to canonical "d8p1:Name" form (InnerText already contains prefix)
+	return $fp
+}
+
+# Check if appearance fingerprint matches a built-in style.
+# Returns style name or $null.
+function Match-BuiltinStyle {
+	param($fp)
+	foreach ($styleName in $script:builtinStyleFingerprints.Keys) {
+		$expected = $script:builtinStyleFingerprints[$styleName]
+		$match = $true
+		# All expected keys must be present with matching value
+		foreach ($k in $expected.Keys) {
+			if (-not $fp.ContainsKey($k) -or $fp[$k] -ne $expected[$k]) { $match = $false; break }
+		}
+		if (-not $match) { continue }
+		# Must not have extra keys that aren't in the expected fingerprint
+		$extras = @($fp.Keys | Where-Object { -not $expected.ContainsKey($_) })
+		if ($extras.Count -ne 0) { continue }
+		return $styleName
+	}
+	return $null
+}
+
+# Extract per-cell width/minHeight/merge from appearance.
+function Get-CellPerCellAttrs {
+	param($appNode)
+	$attrs = @{ width = $null; height = $null; mergeV = $false; mergeH = $false; drilldown = $null }
+	if (-not $appNode) { return $attrs }
+	foreach ($it in $appNode.SelectNodes("dcscor:item", $ns)) {
+		$pName = Get-Text $it "dcscor:parameter"
+		$val = $it.SelectSingleNode("dcscor:value", $ns)
+		if (-not $pName) { continue }
+		switch ($pName) {
+			'МинимальнаяШирина'        { if ($val) { $attrs.width = $val.InnerText } }
+			'МинимальнаяВысота'        { if ($val) { $attrs.height = $val.InnerText } }
+			'ОбъединятьПоВертикали'    { if ($val -and $val.InnerText -eq 'true') { $attrs.mergeV = $true } }
+			'ОбъединятьПоГоризонтали'  { if ($val -and $val.InnerText -eq 'true') { $attrs.mergeH = $true } }
+			'Расшифровка'              {
+				# value xsi:type=dcscor:Parameter pointing to Расшифровка_X
+				if ($val) {
+					$paramRef = $val.InnerText
+					if ($paramRef -match '^Расшифровка_(.+)$') { $attrs.drilldown = $matches[1] }
+				}
+			}
+		}
+	}
+	return $attrs
+}
+
+# Extract cell content: string text, "{ParamName}", "|", ">", or $null
+function Get-CellContent {
+	param($cellNode, $perCellAttrs)
+	# Check merge flags first — empty cells with these flags are "|" or ">"
+	if ($perCellAttrs.mergeV) { return '|' }
+	if ($perCellAttrs.mergeH) { return '>' }
+
+	$item = $cellNode.SelectSingleNode("dcsat:item", $ns)
+	if (-not $item) { return $null }
+	$itemType = Get-LocalXsiType $item
+	$valNode = $item.SelectSingleNode("dcsat:value", $ns)
+	if (-not $valNode) { return $null }
+	$valType = Get-LocalXsiType $valNode
+
+	if ($itemType -eq 'Field' -and $valType -eq 'Parameter') {
+		return '{' + $valNode.InnerText + '}'
+	}
+	if ($valType -eq 'LocalStringType') {
+		$text = Get-MLText $valNode
+		if ($text -is [System.Collections.IDictionary]) {
+			# multilang in template cell — keep as-is; emit via object form (Ring 2 candidate)
+			return $text
+		}
+		return $text
+	}
+	# Fallback: take inner text
+	return $valNode.InnerText
+}
+
+# Build template parameter entry. Returns hashtable with `name` + `expression` (+ optional `drilldown`)
+function Build-TemplateParameter {
+	param($pNode)
+	$pType = Get-LocalXsiType $pNode
+	$obj = [ordered]@{}
+	$obj['name'] = Get-Text $pNode "dcsat:name"
+	if ($pType -eq 'ExpressionAreaTemplateParameter') {
+		$obj['expression'] = Get-Text $pNode "dcsat:expression"
+	} elseif ($pType -eq 'DetailsAreaTemplateParameter') {
+		# Marker — handled by drilldown folding logic in Build-Template
+		$obj['__details__'] = $true
+		$obj['expression'] = Get-Text $pNode "dcsat:expression"
+	}
+	return $obj
+}
+
+# Build template entry from <template> node
+function Build-Template {
+	param($templateNode, [string]$loc)
+	$tmplObj = [ordered]@{ name = Get-Text $templateNode "r:name" }
+	$inner = $templateNode.SelectSingleNode("r:template", $ns)
+	if (-not $inner) { return $tmplObj }
+
+	# Walk rows
+	$rowNodes = $inner.SelectNodes("dcsat:item[@xsi:type='dcsat:TableRow']", $ns)
+	# fallback: any dcsat:item (in case xsi prefix differs)
+	if ($rowNodes.Count -eq 0) {
+		$allItems = $inner.SelectNodes("dcsat:item", $ns)
+		$rowNodes = @()
+		foreach ($n in $allItems) { if ((Get-LocalXsiType $n) -eq 'TableRow') { $rowNodes += $n } }
+	}
+
+	$rows = @()
+	$widths = $null
+	$minHeight = $null
+	$detectedStyle = $null
+	$styleMismatch = $false
+	$drilldownByParam = @{}   # param name → field name (X from Расшифровка_X)
+
+	$rowIdx = 0
+	foreach ($rowNode in $rowNodes) {
+		$cells = @()
+		$cellNodes = $rowNode.SelectNodes("dcsat:tableCell", $ns)
+		$colIdx = 0
+		# First-row collects widths
+		$rowWidths = @()
+		foreach ($cellNode in $cellNodes) {
+			$appNode = $cellNode.SelectSingleNode("dcsat:appearance", $ns)
+			$perCell = Get-CellPerCellAttrs $appNode
+			$content = Get-CellContent $cellNode $perCell
+
+			# Style detection (skip empty cells with no appearance, and merge cells)
+			if ($appNode -and -not $perCell.mergeV -and -not $perCell.mergeH) {
+				$fp = Get-AppearanceFingerprint $appNode
+				$matched = Match-BuiltinStyle $fp
+				if ($null -eq $detectedStyle) {
+					$detectedStyle = $matched
+				} elseif ($matched -ne $detectedStyle) {
+					$styleMismatch = $true
+				}
+			}
+
+			# Drilldown attachment
+			if ($content -match '^\{(.+)\}$' -and $perCell.drilldown) {
+				$drilldownByParam[$matches[1]] = $perCell.drilldown
+			}
+
+			# First row collects widths from any non-merge cell
+			if ($rowIdx -eq 0 -and $perCell.width) { $rowWidths += $perCell.width }
+			# First row collects minHeight from the first non-empty cell
+			if ($rowIdx -eq 0 -and $colIdx -eq 0 -and $perCell.height) { $minHeight = $perCell.height }
+
+			$cells += $content
+			$colIdx++
+		}
+		if ($rowIdx -eq 0 -and $rowWidths.Count -gt 0) { $widths = $rowWidths }
+		$rows += ,$cells
+		$rowIdx++
+	}
+
+	# Template parameters (and drilldown folding)
+	$paramNodes = $templateNode.SelectNodes("r:parameter", $ns)
+	$exprParams = [ordered]@{}
+	$detailParams = @{}
+	foreach ($pn in $paramNodes) {
+		$pType = Get-LocalXsiType $pn
+		$pName = Get-Text $pn "dcsat:name"
+		if ($pType -eq 'ExpressionAreaTemplateParameter') {
+			$exprParams[$pName] = Get-Text $pn "dcsat:expression"
+		} elseif ($pType -eq 'DetailsAreaTemplateParameter') {
+			# Name format: Расшифровка_<X>
+			if ($pName -match '^Расшифровка_(.+)$') {
+				$detailParams[$matches[1]] = $true
+			}
+		}
+	}
+
+	$templateParams = @()
+	foreach ($pname in $exprParams.Keys) {
+		$entry = [ordered]@{ name = $pname; expression = $exprParams[$pname] }
+		if ($drilldownByParam.ContainsKey($pname)) {
+			$entry['drilldown'] = $drilldownByParam[$pname]
+		}
+		$templateParams += $entry
+	}
+
+	# Decide output form
+	if ($detectedStyle -and -not $styleMismatch) {
+		$tmplObj['style'] = $detectedStyle
+	} elseif ($styleMismatch -or ($null -eq $detectedStyle -and $rows.Count -gt 0)) {
+		# Couldn't unify style — emit sentinel
+		$tmplObj['__unsupported__'] = (New-Sentinel -kind 'TemplateStyleMismatch' -loc $loc -detail 'Шаблон содержит ячейки с непокрытым/неоднородным оформлением (Кольцо 2)')['__unsupported__']
+	}
+	if ($widths)    { $tmplObj['widths']    = $widths }
+	if ($minHeight) { $tmplObj['minHeight'] = $minHeight }
+	$tmplObj['rows'] = $rows
+	if ($templateParams.Count -gt 0) { $tmplObj['parameters'] = $templateParams }
+
+	return $tmplObj
+}
+
 # --- 4. dataSources ---
 
 $dataSources = @()
@@ -622,6 +918,17 @@ if ($calculatedFields.Count -gt 0) { $out['calculatedFields'] = $calculatedField
 if ($totalFields.Count -gt 0)      { $out['totalFields'] = $totalFields }
 if ($parameters.Count -gt 0)       { $out['parameters'] = $parameters }
 
+# --- 5e. templates ---
+
+$templates = @()
+$tNodes = $root.SelectNodes("r:template", $ns)
+$ti = 0
+foreach ($tn in $tNodes) {
+	$templates += (Build-Template -templateNode $tn -loc "template[$ti]")
+	$ti++
+}
+if ($templates.Count -gt 0) { $out['templates'] = $templates }
+
 # --- 7. Serialize ---
 
 $json = $out | ConvertTo-Json -Depth 32
@@ -653,7 +960,7 @@ if ($OutputPath) {
 		Write-Host "Warnings: $wPath ($($script:warnings.Count) issue(s))" -ForegroundColor Yellow
 	}
 
-	[Console]::Error.WriteLine("Decompiled: dataSets=$($dataSets.Count), calc=$($calculatedFields.Count), totals=$($totalFields.Count), params=$($parameters.Count), warnings=$($script:warnings.Count)")
+	[Console]::Error.WriteLine("Decompiled: dataSets=$($dataSets.Count), calc=$($calculatedFields.Count), totals=$($totalFields.Count), params=$($parameters.Count), templates=$($templates.Count), warnings=$($script:warnings.Count)")
 } else {
 	Write-Output $json
 	if ($script:warnings.Count -gt 0) {
