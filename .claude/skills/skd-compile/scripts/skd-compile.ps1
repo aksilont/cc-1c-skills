@@ -1,4 +1,4 @@
-﻿# skd-compile v1.26 — Compile 1C DCS from JSON
+﻿# skd-compile v1.27 — Compile 1C DCS from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[string]$DefinitionFile,
@@ -35,6 +35,47 @@ if ($DefinitionFile) {
 }
 
 $def = $json | ConvertFrom-Json
+
+# --- Sentinel check: refuse to compile if JSON contains skd-decompile sentinels ---
+# These mark places the decompiler couldn't reverse cleanly; user must resolve
+# them manually before compile (see <basename>.warnings.md alongside the JSON).
+$script:foundSentinels = @()
+function Scan-Sentinels {
+	param($obj, [string]$path)
+	if ($null -eq $obj) { return }
+	if ($obj -is [System.Collections.IDictionary]) {
+		foreach ($k in @($obj.Keys)) {
+			if ($k -eq '__unsupported__') {
+				$u = $obj[$k]
+				$id = $u.id; $kind = $u.kind; $loc = $u.loc
+				$script:foundSentinels += "  $id [$kind] at $path → $loc"
+			} else {
+				Scan-Sentinels -obj $obj[$k] -path "$path/$k"
+			}
+		}
+	} elseif ($obj -is [System.Management.Automation.PSCustomObject]) {
+		foreach ($p in $obj.PSObject.Properties) {
+			if ($p.Name -eq '__unsupported__') {
+				$u = $p.Value
+				$id = $u.id; $kind = $u.kind; $loc = $u.loc
+				$script:foundSentinels += "  $id [$kind] at $path → $loc"
+			} else {
+				Scan-Sentinels -obj $p.Value -path "$path/$($p.Name)"
+			}
+		}
+	} elseif ($obj -is [System.Collections.IEnumerable] -and -not ($obj -is [string])) {
+		$i = 0
+		foreach ($item in $obj) { Scan-Sentinels -obj $item -path "$path[$i]"; $i++ }
+	}
+}
+Scan-Sentinels -obj $def -path ''
+if ($script:foundSentinels.Count -gt 0) {
+	[Console]::Error.WriteLine("skd-compile: JSON содержит __unsupported__ маркеры от skd-decompile.")
+	[Console]::Error.WriteLine("Это конструкции, которые декомпиляция не смогла обратить — нужно разрешить вручную перед компиляцией.")
+	[Console]::Error.WriteLine("См. <basename>.warnings.md рядом с JSON. Найдено:")
+	foreach ($s in $script:foundSentinels) { [Console]::Error.WriteLine($s) }
+	exit 4
+}
 
 if (-not $def.dataSets -or $def.dataSets.Count -eq 0) {
 	Write-Error "JSON must have at least one entry in 'dataSets'"
