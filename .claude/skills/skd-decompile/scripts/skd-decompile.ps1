@@ -1,4 +1,4 @@
-﻿# skd-decompile v0.5 — Decompile 1C DCS Template.xml to JSON DSL (draft)
+﻿# skd-decompile v0.6 — Decompile 1C DCS Template.xml to JSON DSL (draft)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -1166,9 +1166,8 @@ if ($dataSources.Count -eq 1 -and $dataSources[0].name -eq 'ИсточникДа
 
 # --- 5. dataSets ---
 
-$dataSets = @()
-$dsNodes = $root.SelectNodes("r:dataSet", $ns)
-foreach ($dsNode in $dsNodes) {
+function Build-DataSet {
+	param($dsNode, [string]$loc)
 	$xsiType = Get-LocalXsiType $dsNode
 	$name = Get-Text $dsNode "r:name"
 	$ds = [ordered]@{ name = $name }
@@ -1181,14 +1180,20 @@ foreach ($dsNode in $dsNodes) {
 			$ds['objectName'] = Get-Text $dsNode "r:objectName"
 		}
 		'DataSetUnion' {
-			$ds['__unsupported__'] = (New-Sentinel -kind 'DataSetUnion' -loc "dataSet[$name]" -detail 'Реализуется в слое 15')['__unsupported__']
+			$nested = @()
+			$ni = 0
+			foreach ($nNode in $dsNode.SelectNodes("r:dataSet", $ns)) {
+				$nested += (Build-DataSet -dsNode $nNode -loc "$loc/items[$ni]")
+				$ni++
+			}
+			$ds['items'] = $nested
 		}
 		default {
-			$ds['__unsupported__'] = (New-Sentinel -kind "DataSetType:$xsiType" -loc "dataSet[$name]" -detail "Неизвестный тип набора данных")['__unsupported__']
+			$ds['__unsupported__'] = (New-Sentinel -kind "DataSetType:$xsiType" -loc $loc -detail "Неизвестный тип набора данных")['__unsupported__']
 		}
 	}
 
-	# Fields
+	# Fields (Query, Object, and Union itself can all have fields)
 	$fieldNodes = $dsNode.SelectNodes("r:field", $ns)
 	if ($fieldNodes.Count -gt 0) {
 		$fields = @()
@@ -1196,20 +1201,30 @@ foreach ($dsNode in $dsNodes) {
 		foreach ($fn in $fieldNodes) {
 			$fxsi = Get-LocalXsiType $fn
 			if ($fxsi -ne 'DataSetFieldField') {
-				$fields += (New-Sentinel -kind "FieldType:$fxsi" -loc "dataSet[$name]/field[$fi]" -detail 'Тип поля не DataSetFieldField')
+				$fields += (New-Sentinel -kind "FieldType:$fxsi" -loc "$loc/field[$fi]" -detail 'Тип поля не DataSetFieldField')
 			} else {
-				$fields += (Build-Field -fieldNode $fn -loc "dataSet[$name]/field[$fi]")
+				$fields += (Build-Field -fieldNode $fn -loc "$loc/field[$fi]")
 			}
 			$fi++
 		}
 		$ds['fields'] = $fields
 	}
 
-	# dataSource attachment — omit if matches default
-	$dsSrc = Get-Text $dsNode "r:dataSource"
-	if ($emitDataSources -and $dsSrc) { $ds['dataSource'] = $dsSrc }
+	# dataSource attachment — omit if matches default (Union has no dataSource)
+	if ($xsiType -ne 'DataSetUnion') {
+		$dsSrc = Get-Text $dsNode "r:dataSource"
+		if ($emitDataSources -and $dsSrc) { $ds['dataSource'] = $dsSrc }
+	}
 
-	$dataSets += $ds
+	return $ds
+}
+
+$dataSets = @()
+$dsNodes = $root.SelectNodes("r:dataSet", $ns)
+$dsi = 0
+foreach ($dsNode in $dsNodes) {
+	$dataSets += (Build-DataSet -dsNode $dsNode -loc "dataSet[$dsi]")
+	$dsi++
 }
 
 # --- 5b. calculatedFields ---
