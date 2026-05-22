@@ -1,4 +1,4 @@
-﻿# skd-decompile v0.34 — Decompile 1C DCS Template.xml to JSON DSL (draft)
+﻿# skd-decompile v0.35 — Decompile 1C DCS Template.xml to JSON DSL (draft)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -1710,6 +1710,9 @@ function Build-TableAxisBlock {
 	$opNode = $node.SelectSingleNode("dcsset:outputParameters", $ns)
 	$op = Build-OutputParameters -opNode $opNode
 	if ($op -and $op.Count -gt 0) { $entry['outputParameters'] = $op }
+	# nested children (StructureItemGroup внутри table row/column или chart axis)
+	$children = Build-Structure -node $node -loc "$loc/children"
+	if ($children.Count -gt 0) { $entry['children'] = $children }
 	# user-settings on the axis itself
 	# viewMode: сохраняем даже Normal если node присутствует
 	$avmNode = $node.SelectSingleNode("dcsset:viewMode", $ns)
@@ -1804,12 +1807,17 @@ function Build-Structure {
 			$idx++
 			continue
 		}
-		if ($xt -ne 'StructureItemGroup') {
+		# <dcsset:item> без xsi:type → StructureItemGroup (default form, встречается
+		# во вложенных children внутри table row / structure group)
+		if ($xt -and $xt -ne 'StructureItemGroup') {
 			$items += (New-Sentinel -kind "StructureItem:$xt" -loc $loc -detail 'Тип структуры пока не покрыт')
 			$idx++
 			continue
 		}
 		$entry = [ordered]@{}
+		# use=false на самой группе — отключённая ветка структуры
+		$gUse = Get-Text $it "dcsset:use"
+		if ($gUse -eq 'false') { $entry['use'] = $false }
 		# Optional name
 		$nm = Get-Text $it "dcsset:name"
 		if ($nm) { $entry['name'] = $nm }
