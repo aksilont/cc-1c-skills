@@ -1,4 +1,4 @@
-﻿# skd-decompile v0.37 — Decompile 1C DCS Template.xml to JSON DSL (draft)
+﻿# skd-decompile v0.38 — Decompile 1C DCS Template.xml to JSON DSL (draft)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -488,6 +488,10 @@ function Read-InputParameters {
 					$cpl += $cplEntry
 				}
 				$entry['choiceParameterLinks'] = $cpl
+			} elseif ($vType -eq 'LocalStringType') {
+				# Multilang dict {ru, en, ...}
+				$ml = Get-MLText $val
+				if ($ml) { $entry['value'] = $ml } else { $entry['value'] = '' }
 			} else {
 				# Simple typed value
 				$txt = $val.InnerText
@@ -714,6 +718,7 @@ function Build-Parameter {
 	$useAttr = Get-Text $pNode "r:use"
 	$useRestriction = (Get-Text $pNode "r:useRestriction") -eq 'true'
 	$expression = Get-Text $pNode "r:expression"
+	$inputParameters = Read-InputParameters -parentNode $pNode
 	# hidden — combo: availableAsField=false + useRestriction=true (как эмитит compile @hidden)
 	$notAField = ($availableAsField -eq 'false')
 	$hidden = $notAField -and $useRestriction
@@ -746,6 +751,7 @@ function Build-Parameter {
 		useRestriction = $useRestriction
 		expression = $expression
 		availableValues = $availableValues
+		inputParameters = $inputParameters
 	}
 	return $result
 }
@@ -771,6 +777,7 @@ function Render-Parameter {
 	# explicit denyIncomplete/use without @autoDates, useRestriction without autoDates, expression set
 	$needsObject = $false
 	if ($p.availableValues -and $p.availableValues.Count -gt 0) { $needsObject = $true }
+	if ($p.inputParameters) { $needsObject = $true }
 	if ($titleNeedsObject) { $needsObject = $true }
 	if ($typeIsArray) { $needsObject = $true }
 	if ($valueIsDict) { $needsObject = $true }
@@ -804,6 +811,7 @@ function Render-Parameter {
 	if ($p.autoDates) { $obj['autoDates'] = $true }
 	if ($p.expression) { $obj['expression'] = $p.expression }
 	if ($p.availableValues -and $p.availableValues.Count -gt 0) { $obj['availableValues'] = $p.availableValues }
+	if ($p.inputParameters) { $obj['inputParameters'] = $p.inputParameters }
 	return $obj
 }
 
@@ -1373,6 +1381,13 @@ function Build-FilterItem {
 	$vmNode = $itemNode.SelectSingleNode("dcsset:viewMode", $ns)
 	$viewMode = if ($vmNode) { $vmNode.InnerText } else { $null }
 	$userPresNode = $itemNode.SelectSingleNode("dcsset:userSettingPresentation", $ns)
+	# presentation (multilang or string) на самом filter item
+	$fiPresNode = $itemNode.SelectSingleNode("dcsset:presentation", $ns)
+	$fiPres = $null
+	if ($fiPresNode) {
+		$fiPres = Get-MLText $fiPresNode
+		if (-not $fiPres) { $fiPres = $fiPresNode.InnerText }
+	}
 
 	$flags = @()
 	if ($use -eq 'false') { $flags += '@off' }
@@ -1389,9 +1404,10 @@ function Build-FilterItem {
 
 	# Переход в object form:
 	# - userSettingPresentation,
-	# - массивное value (multi-right или пустой ValueList),
-	# - явный valueType (например, dcscor:Field — field-to-field comparison)
-	if ($userPresNode -or $valueIsArrayFlag -or $valueTypeAttr) {
+	# - massivное value (multi-right или пустой ValueList),
+	# - явный valueType (например, dcscor:Field — field-to-field comparison),
+	# - presentation на item (multilang или просто текст)
+	if ($userPresNode -or $valueIsArrayFlag -or $valueTypeAttr -or $fiPres) {
 		$obj = [ordered]@{ field = $field; op = $op }
 		if ($op -notin $noValueOps -and $null -ne $value) {
 			if ($valueIsArrayFlag) {
@@ -1406,6 +1422,7 @@ function Build-FilterItem {
 		if ($valueTypeAttr) { $obj['valueType'] = $valueTypeAttr }
 		if ($use -eq 'false') { $obj['use'] = $false }
 		if ($userId) { $obj['userSettingID'] = 'auto' }
+		if ($fiPres) { $obj['presentation'] = $fiPres }
 		if ($viewMode) { $obj['viewMode'] = $viewMode }
 		if ($userPresNode) { $obj['userSettingPresentation'] = Get-MLText $userPresNode }
 		return $obj
