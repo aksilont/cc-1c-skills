@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# skd-compile v1.58 — Compile 1C DCS from JSON
+# skd-compile v1.59 — Compile 1C DCS from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 import argparse
 import json
@@ -1801,6 +1801,8 @@ def emit_order(lines, items, indent, skip_auto=False, block_view_mode=None):
             elif re.match(r'(?i)^asc$', d):
                 d = 'Asc'
             lines.append(f'{indent}\t<dcsset:item xsi:type="dcsset:OrderItemField">')
+            if item.get('use') is False:
+                lines.append(f'{indent}\t\t<dcsset:use>false</dcsset:use>')
             lines.append(f'{indent}\t\t<dcsset:field>{esc_xml(str(item["field"]))}</dcsset:field>')
             lines.append(f'{indent}\t\t<dcsset:orderType>{d}</dcsset:orderType>')
             if item.get('viewMode'):

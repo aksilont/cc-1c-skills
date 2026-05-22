@@ -1,4 +1,4 @@
-﻿# skd-decompile v0.43 — Decompile 1C DCS Template.xml to JSON DSL (draft)
+﻿# skd-decompile v0.44 — Decompile 1C DCS Template.xml to JSON DSL (draft)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -1533,10 +1533,13 @@ function Build-Order {
 				$fn = Get-Text $it "dcsset:field"
 				$ot = Get-Text $it "dcsset:orderType"
 				$vmN = $it.SelectSingleNode("dcsset:viewMode", $ns)
-				if ($vmN) {
+				$useV = Get-Text $it "dcsset:use"
+				$useFalse = ($useV -eq 'false')
+				if ($vmN -or $useFalse) {
 					$obj = [ordered]@{ field = $fn }
+					if ($useFalse) { $obj['use'] = $false }
 					if ($ot -eq 'Desc') { $obj['direction'] = 'desc' }
-					$obj['viewMode'] = $vmN.InnerText
+					if ($vmN) { $obj['viewMode'] = $vmN.InnerText }
 					$out += $obj
 				} else {
 					if ($ot -eq 'Desc') { $out += "$fn desc" } else { $out += $fn }

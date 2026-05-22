@@ -1,4 +1,4 @@
-﻿# skd-compile v1.58 — Compile 1C DCS from JSON
+﻿# skd-compile v1.59 — Compile 1C DCS from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[string]$DefinitionFile,
@@ -2149,6 +2149,9 @@ function Emit-Order {
 			$dir = if ($item.direction) { "$($item.direction)" } else { "Asc" }
 			if ($dir -match '^(?i)desc$') { $dir = "Desc" } elseif ($dir -match '^(?i)asc$') { $dir = "Asc" }
 			X "$indent`t<dcsset:item xsi:type=`"dcsset:OrderItemField`">"
+			if ($item.use -eq $false) {
+				X "$indent`t`t<dcsset:use>false</dcsset:use>"
+			}
 			X "$indent`t`t<dcsset:field>$(Esc-Xml "$($item.field)")</dcsset:field>"
 			X "$indent`t`t<dcsset:orderType>$dir</dcsset:orderType>"
 			if ($item.viewMode) {
