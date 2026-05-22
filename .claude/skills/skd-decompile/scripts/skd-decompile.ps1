@@ -1,4 +1,4 @@
-﻿# skd-decompile v0.31 — Decompile 1C DCS Template.xml to JSON DSL (draft)
+﻿# skd-decompile v0.32 — Decompile 1C DCS Template.xml to JSON DSL (draft)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -1317,8 +1317,27 @@ function Build-FilterItem {
 	$ct = Get-Text $itemNode "dcsset:comparisonType"
 	$op = $script:filterOpMap[$ct]
 	if (-not $op) { $op = $ct }
-	$rightNode = $itemNode.SelectSingleNode("dcsset:right", $ns)
-	$value = Get-FilterValue $rightNode
+
+	# Чтение <right>: один, несколько (InList multi-value) или ValueListType (пустой list-placeholder)
+	$rightNodes = @($itemNode.SelectNodes("dcsset:right", $ns))
+	$value = $null
+	$valueIsArrayFlag = $false
+	if ($rightNodes.Count -eq 1) {
+		$rn = $rightNodes[0]
+		if ((Get-LocalXsiType $rn) -eq 'ValueListType') {
+			# Пустой список-placeholder для пользовательских настроек InList
+			$value = @()
+			$valueIsArrayFlag = $true
+		} else {
+			$value = Get-FilterValue $rn
+		}
+	} elseif ($rightNodes.Count -gt 1) {
+		# Несколько значений → массив (InList с конкретными значениями)
+		$arr = @()
+		foreach ($rn in $rightNodes) { $arr += (Get-FilterValue $rn) }
+		$value = $arr
+		$valueIsArrayFlag = $true
+	}
 
 	$use = Get-Text $itemNode "dcsset:use"
 	$userId = Get-Text $itemNode "dcsset:userSettingID"
@@ -1337,11 +1356,22 @@ function Build-FilterItem {
 	# nullity ops have no value
 	$noValueOps = @('filled','notFilled')
 
-	# Переход в object form: userSettingPresentation ИЛИ явный viewMode=Normal
-	# (Normal не выразим в shorthand, а отсутствие тоже нужно сохранить)
-	if ($userPresNode -or $viewMode -eq 'Normal') {
+	# Переход в object form:
+	# - userSettingPresentation,
+	# - явный viewMode=Normal (отсутствие тоже нужно сохранить),
+	# - массивное value (multi-right или пустой ValueList)
+	if ($userPresNode -or $viewMode -eq 'Normal' -or $valueIsArrayFlag) {
 		$obj = [ordered]@{ field = $field; op = $op }
-		if ($op -notin $noValueOps -and $null -ne $value) { $obj['value'] = $value }
+		if ($op -notin $noValueOps -and $null -ne $value) {
+			if ($valueIsArrayFlag) {
+				# Принудительный массив (для empty ValueList тоже)
+				$arrAsList = New-Object System.Collections.ArrayList
+				foreach ($vv in @($value)) { [void]$arrAsList.Add($vv) }
+				$obj['value'] = $arrAsList
+			} else {
+				$obj['value'] = $value
+			}
+		}
 		if ($use -eq 'false') { $obj['use'] = $false }
 		if ($userId) { $obj['userSettingID'] = 'auto' }
 		if ($viewMode) { $obj['viewMode'] = $viewMode }
@@ -1354,7 +1384,8 @@ function Build-FilterItem {
 	if ($op -in $noValueOps) {
 		$s += " $op"
 	} else {
-		$s += " $op $value"
+		$vDisplay = if ($null -ne $value -and "$value" -ne '') { "$value" } else { '_' }
+		$s += " $op $vDisplay"
 	}
 	if ($flags) { $s += ' ' + ($flags -join ' ') }
 	return $s
