@@ -1,4 +1,4 @@
-﻿# skd-compile v1.48 — Compile 1C DCS from JSON
+﻿# skd-compile v1.49 — Compile 1C DCS from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[string]$DefinitionFile,
@@ -2519,6 +2519,12 @@ function Emit-TableAxisBlock {
 	if ($block.outputParameters) {
 		Emit-OutputParameters -params $block.outputParameters -indent $indent
 	}
+	# nested children (StructureItemGroup внутри table row/column или chart axis)
+	if ($block.children) {
+		foreach ($child in $block.children) {
+			Emit-StructureItem -item $child -indent $indent
+		}
+	}
 	if ($block.viewMode) {
 		X "$indent<dcsset:viewMode>$(Esc-Xml "$($block.viewMode)")</dcsset:viewMode>"
 	}
@@ -2538,6 +2544,11 @@ function Emit-StructureItem {
 
 	if ($type -eq "group") {
 		X "$indent<dcsset:item xsi:type=`"dcsset:StructureItemGroup`">"
+
+		# use=false — отключённая ветка структуры
+		if ($item.use -eq $false) {
+			X "$indent`t<dcsset:use>false</dcsset:use>"
+		}
 
 		if ($item.name) {
 			X "$indent`t<dcsset:name>$(Esc-Xml "$($item.name)")</dcsset:name>"

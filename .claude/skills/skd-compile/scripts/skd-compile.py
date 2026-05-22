@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# skd-compile v1.48 — Compile 1C DCS from JSON
+# skd-compile v1.49 — Compile 1C DCS from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 import argparse
 import json
@@ -2091,6 +2091,10 @@ def emit_table_axis_block(lines, block, indent, emit_name=True):
         emit_selection(lines, block['selection'], indent)
     if block.get('outputParameters'):
         emit_output_parameters(lines, block['outputParameters'], indent)
+    # nested children (StructureItemGroup внутри table row/column или chart axis)
+    if block.get('children'):
+        for child in block['children']:
+            emit_structure_item(lines, child, indent)
     if block.get('viewMode'):
         lines.append(f'{indent}<dcsset:viewMode>{esc_xml(str(block["viewMode"]))}</dcsset:viewMode>')
     if block.get('userSettingID'):
@@ -2105,6 +2109,9 @@ def emit_structure_item(lines, item, indent):
 
     if item_type == 'group':
         lines.append(f'{indent}<dcsset:item xsi:type="dcsset:StructureItemGroup">')
+
+        if item.get('use') is False:
+            lines.append(f'{indent}\t<dcsset:use>false</dcsset:use>')
 
         if item.get('name'):
             lines.append(f'{indent}\t<dcsset:name>{esc_xml(str(item["name"]))}</dcsset:name>')
