@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# skd-compile v1.39 — Compile 1C DCS from JSON
+# skd-compile v1.40 — Compile 1C DCS from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 import argparse
 import json
@@ -1956,6 +1956,68 @@ def parse_structure_shorthand(s):
     return []
 
 
+def emit_user_fields(lines, items, indent):
+    if not items or len(items) == 0:
+        return
+    lines.append(f'{indent}<dcsset:userFields>')
+    for uf in items:
+        u_type = 'UserFieldCase' if uf.get('cases') is not None else 'UserFieldExpression'
+        lines.append(f'{indent}\t<dcsset:item xsi:type="dcsset:{u_type}">')
+        if uf.get('dataPath'):
+            lines.append(f'{indent}\t\t<dcsset:dataPath>{esc_xml(str(uf["dataPath"]))}</dcsset:dataPath>')
+        if uf.get('title'):
+            emit_mltext(lines, f'{indent}\t\t', 'dcsset:lwsTitle', uf['title'], no_xsi_type=True)
+        if u_type == 'UserFieldExpression':
+            d = uf.get('detail') or {}
+            if d.get('expression'):
+                lines.append(f'{indent}\t\t<dcsset:detailExpression>{esc_xml(str(d["expression"]))}</dcsset:detailExpression>')
+            if d.get('presentation'):
+                lines.append(f'{indent}\t\t<dcsset:detailExpressionPresentation>{esc_xml(str(d["presentation"]))}</dcsset:detailExpressionPresentation>')
+            t = uf.get('total') or {}
+            if t.get('expression'):
+                lines.append(f'{indent}\t\t<dcsset:totalExpression>{esc_xml(str(t["expression"]))}</dcsset:totalExpression>')
+            if t.get('presentation'):
+                lines.append(f'{indent}\t\t<dcsset:totalExpressionPresentation>{esc_xml(str(t["presentation"]))}</dcsset:totalExpressionPresentation>')
+        else:
+            cases = uf.get('cases') or []
+            if len(cases) == 0:
+                lines.append(f'{indent}\t\t<dcsset:cases/>')
+            else:
+                lines.append(f'{indent}\t\t<dcsset:cases>')
+                for c in cases:
+                    lines.append(f'{indent}\t\t\t<dcsset:item>')
+                    if c.get('filter'):
+                        emit_filter(lines, c['filter'], f'{indent}\t\t\t\t')
+                    if c.get('value') is not None:
+                        cv = c['value']
+                        if isinstance(cv, bool):
+                            lines.append(f'{indent}\t\t\t\t<dcsset:value xsi:type="xs:boolean">{str(cv).lower()}</dcsset:value>')
+                        elif isinstance(cv, (int, float)):
+                            lines.append(f'{indent}\t\t\t\t<dcsset:value xsi:type="xs:decimal">{cv}</dcsset:value>')
+                        else:
+                            lines.append(f'{indent}\t\t\t\t<dcsset:value xsi:type="xs:string">{esc_xml(str(cv))}</dcsset:value>')
+                    if c.get('presentation'):
+                        emit_mltext(lines, f'{indent}\t\t\t\t', 'dcsset:lwsPresentationValue', c['presentation'], no_xsi_type=True)
+                    lines.append(f'{indent}\t\t\t</dcsset:item>')
+                lines.append(f'{indent}\t\t</dcsset:cases>')
+        lines.append(f'{indent}\t</dcsset:item>')
+    lines.append(f'{indent}</dcsset:userFields>')
+
+
+def emit_table_axis_block(lines, block, indent):
+    """Shared emitter for table column/row and chart point/series."""
+    gb = block.get('groupBy') or block.get('groupFields')
+    emit_group_items(lines, gb, indent)
+    if block.get('filter'):
+        emit_filter(lines, block['filter'], indent)
+    if block.get('order'):
+        emit_order(lines, block['order'], indent)
+    if block.get('selection'):
+        emit_selection(lines, block['selection'], indent)
+    if block.get('outputParameters'):
+        emit_output_parameters(lines, block['outputParameters'], indent)
+
+
 def emit_structure_item(lines, item, indent):
     item_type = str(item.get('type', 'group'))
 
@@ -2001,11 +2063,7 @@ def emit_structure_item(lines, item, indent):
         if item.get('columns'):
             for col in item['columns']:
                 lines.append(f'{indent}\t<dcsset:column>')
-                emit_group_items(lines, col.get('groupBy') or col.get('groupFields'), f'{indent}\t\t')
-                col_order = col.get('order') or ['Auto']
-                emit_order(lines, col_order, f'{indent}\t\t')
-                col_sel = col.get('selection') or ['Auto']
-                emit_selection(lines, col_sel, f'{indent}\t\t')
+                emit_table_axis_block(lines, col, f'{indent}\t\t')
                 lines.append(f'{indent}\t</dcsset:column>')
 
         # Rows
@@ -2014,11 +2072,7 @@ def emit_structure_item(lines, item, indent):
                 lines.append(f'{indent}\t<dcsset:row>')
                 if row.get('name'):
                     lines.append(f'{indent}\t\t<dcsset:name>{esc_xml(str(row["name"]))}</dcsset:name>')
-                emit_group_items(lines, row.get('groupBy') or row.get('groupFields'), f'{indent}\t\t')
-                row_order = row.get('order') or ['Auto']
-                emit_order(lines, row_order, f'{indent}\t\t')
-                row_sel = row.get('selection') or ['Auto']
-                emit_selection(lines, row_sel, f'{indent}\t\t')
+                emit_table_axis_block(lines, row, f'{indent}\t\t')
                 lines.append(f'{indent}\t</dcsset:row>')
 
         lines.append(f'{indent}</dcsset:item>')
@@ -2032,21 +2086,13 @@ def emit_structure_item(lines, item, indent):
         # Points
         if item.get('points'):
             lines.append(f'{indent}\t<dcsset:point>')
-            emit_group_items(lines, item['points'].get('groupBy') or item['points'].get('groupFields'), f'{indent}\t\t')
-            pt_order = item['points'].get('order') or ['Auto']
-            emit_order(lines, pt_order, f'{indent}\t\t')
-            pt_sel = item['points'].get('selection') or ['Auto']
-            emit_selection(lines, pt_sel, f'{indent}\t\t')
+            emit_table_axis_block(lines, item['points'], f'{indent}\t\t')
             lines.append(f'{indent}\t</dcsset:point>')
 
         # Series
         if item.get('series'):
             lines.append(f'{indent}\t<dcsset:series>')
-            emit_group_items(lines, item['series'].get('groupBy') or item['series'].get('groupFields'), f'{indent}\t\t')
-            sr_order = item['series'].get('order') or ['Auto']
-            emit_order(lines, sr_order, f'{indent}\t\t')
-            sr_sel = item['series'].get('selection') or ['Auto']
-            emit_selection(lines, sr_sel, f'{indent}\t\t')
+            emit_table_axis_block(lines, item['series'], f'{indent}\t\t')
             lines.append(f'{indent}\t</dcsset:series>')
 
         # Selection (chart values)
@@ -2107,6 +2153,10 @@ def emit_settings_variants(lines, defn):
             if prop in s:
                 return str(s[prop])
             return None
+
+        # userFields — пользовательские вычисляемые поля (Expression / Case)
+        if s.get('userFields'):
+            emit_user_fields(lines, s['userFields'], '\t\t\t')
 
         # Selection
         if s.get('selection'):
