@@ -1,4 +1,4 @@
-﻿# skd-compile v1.51 — Compile 1C DCS from JSON
+﻿# skd-compile v1.52 — Compile 1C DCS from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[string]$DefinitionFile,
@@ -2226,7 +2226,12 @@ function Emit-ConditionalAppearance {
 
 		# Presentation
 		if ($ca.presentation) {
-			X "$indent`t`t<dcsset:presentation xsi:type=`"xs:string`">$(Esc-Xml "$($ca.presentation)")</dcsset:presentation>"
+			# Multilang dict {ru, en, ...} → LocalStringType; иначе — xs:string
+			if ($ca.presentation -is [hashtable] -or $ca.presentation -is [System.Collections.IDictionary] -or $ca.presentation -is [PSCustomObject]) {
+				Emit-MLText -tag "dcsset:presentation" -text $ca.presentation -indent "$indent`t`t"
+			} else {
+				X "$indent`t`t<dcsset:presentation xsi:type=`"xs:string`">$(Esc-Xml "$($ca.presentation)")</dcsset:presentation>"
+			}
 		}
 
 		if ($ca.viewMode) {

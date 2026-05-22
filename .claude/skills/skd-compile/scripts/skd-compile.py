@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# skd-compile v1.51 — Compile 1C DCS from JSON
+# skd-compile v1.52 — Compile 1C DCS from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 import argparse
 import json
@@ -1863,7 +1863,11 @@ def emit_conditional_appearance(lines, items, indent, block_view_mode=None):
 
         # Presentation
         if ca.get('presentation'):
-            lines.append(f'{indent}\t\t<dcsset:presentation xsi:type="xs:string">{esc_xml(str(ca["presentation"]))}</dcsset:presentation>')
+            # Multilang dict {ru, en, ...} → LocalStringType; иначе — xs:string
+            if isinstance(ca['presentation'], dict):
+                emit_mltext(lines, f'{indent}\t\t', 'dcsset:presentation', ca['presentation'])
+            else:
+                lines.append(f'{indent}\t\t<dcsset:presentation xsi:type="xs:string">{esc_xml(str(ca["presentation"]))}</dcsset:presentation>')
 
         if ca.get('viewMode'):
             lines.append(f'{indent}\t\t<dcsset:viewMode>{esc_xml(str(ca["viewMode"]))}</dcsset:viewMode>')
