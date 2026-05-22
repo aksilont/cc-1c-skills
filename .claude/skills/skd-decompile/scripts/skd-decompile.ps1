@@ -1,4 +1,4 @@
-﻿# skd-decompile v0.38 — Decompile 1C DCS Template.xml to JSON DSL (draft)
+﻿# skd-decompile v0.39 — Decompile 1C DCS Template.xml to JSON DSL (draft)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -2316,6 +2316,18 @@ foreach ($sv in $svNodes) {
 	# <dcsset:itemsViewMode> on settings — preserve presence (even Normal)
 	$sivmNode = $settingsNode.SelectSingleNode("dcsset:itemsViewMode", $ns)
 	if ($sivmNode) { $settings['itemsViewMode'] = $sivmNode.InnerText }
+
+	# <dcsset:additionalProperties> — key→value свойства варианта (URL, имя, GUID и т.п.)
+	$apNode = $settingsNode.SelectSingleNode("dcsset:additionalProperties", $ns)
+	if ($apNode) {
+		$apDict = [ordered]@{}
+		foreach ($prop in $apNode.SelectNodes("v8:Property", $ns)) {
+			$pName = $prop.GetAttribute("name")
+			$valEl = $prop.SelectSingleNode("v8:Value", $ns)
+			if ($pName -and $valEl) { $apDict[$pName] = $valEl.InnerText }
+		}
+		if ($apDict.Count -gt 0) { $settings['additionalProperties'] = $apDict }
+	}
 
 	# Skip pure-default variants: settings contains only "details" structure (or nothing) +
 	# name=Основной + no distinctive title.
