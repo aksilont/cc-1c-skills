@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# skd-compile v1.59 — Compile 1C DCS from JSON
+# skd-compile v1.60 — Compile 1C DCS from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 import argparse
 import json
@@ -1931,12 +1931,19 @@ def emit_output_parameters(lines, params, indent):
 
     lines.append(f'{indent}<dcsset:outputParameters>')
     for key, val in params.items():
+        # Распознаём wrapper {use: false, value: ...} — отличаем от multilang dict
+        use_wrapper = False
+        if isinstance(val, dict) and val.get('use') is False and 'value' in val:
+            use_wrapper = True
+            val = val['value']
         ptype = OUTPUT_PARAM_TYPES.get(key, 'xs:string')
         # Auto-promote to mltext if value is a multilang dict ({ru, en, ...})
         if isinstance(val, dict):
             ptype = 'mltext'
 
         lines.append(f'{indent}\t<dcscor:item xsi:type="dcsset:SettingsParameterValue">')
+        if use_wrapper:
+            lines.append(f'{indent}\t\t<dcscor:use>false</dcscor:use>')
         lines.append(f'{indent}\t\t<dcscor:parameter>{esc_xml(key)}</dcscor:parameter>')
         if ptype == 'mltext':
             emit_mltext(lines, f'{indent}\t\t', 'dcscor:value', val)

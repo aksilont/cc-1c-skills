@@ -1,4 +1,4 @@
-﻿# skd-compile v1.59 — Compile 1C DCS from JSON
+﻿# skd-compile v1.60 — Compile 1C DCS from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[string]$DefinitionFile,
@@ -2314,6 +2314,15 @@ function Emit-OutputParameters {
 	foreach ($prop in $params.PSObject.Properties) {
 		$key = $prop.Name
 		$rawVal = $prop.Value
+		# Распознаём wrapper {use: false, value: ...} (отличаем от multilang dict)
+		$useWrapper = $false
+		if ($rawVal -is [PSCustomObject] -and $rawVal.PSObject.Properties['use'] -and $rawVal.use -eq $false -and $rawVal.PSObject.Properties['value']) {
+			$useWrapper = $true
+			$rawVal = $rawVal.value
+		} elseif (($rawVal -is [hashtable] -or $rawVal -is [System.Collections.IDictionary]) -and $rawVal.Contains('use') -and $rawVal['use'] -eq $false -and $rawVal.Contains('value')) {
+			$useWrapper = $true
+			$rawVal = $rawVal['value']
+		}
 		$ptype = $script:outputParamTypes[$key]
 		if (-not $ptype) { $ptype = "xs:string" }
 		# Auto-promote to mltext if value is a multilang dict ({ru, en, ...})
@@ -2322,6 +2331,7 @@ function Emit-OutputParameters {
 		}
 
 		X "$indent`t<dcscor:item xsi:type=`"dcsset:SettingsParameterValue`">"
+		if ($useWrapper) { X "$indent`t`t<dcscor:use>false</dcscor:use>" }
 		X "$indent`t`t<dcscor:parameter>$(Esc-Xml $key)</dcscor:parameter>"
 		if ($ptype -eq "mltext") {
 			Emit-MLText -tag "dcscor:value" -text $rawVal -indent "$indent`t`t"
