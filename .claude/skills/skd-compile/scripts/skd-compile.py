@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# skd-compile v1.62 — Compile 1C DCS from JSON
+# skd-compile v1.63 — Compile 1C DCS from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 import argparse
 import json
@@ -851,6 +851,12 @@ def emit_data_set_links(lines, defn):
         lines.append(f'\t\t<destinationExpression>{esc_xml(dst_ex)}</destinationExpression>')
         if link.get('parameter'):
             lines.append(f'\t\t<parameter>{esc_xml(str(link["parameter"]))}</parameter>')
+        if link.get('parameterListAllowed'):
+            lines.append('\t\t<parameterListAllowed>true</parameterListAllowed>')
+        if link.get('startExpression') is not None:
+            lines.append(f'\t\t<startExpression>{esc_xml(str(link["startExpression"]))}</startExpression>')
+        if link.get('linkConditionExpression') is not None:
+            lines.append(f'\t\t<linkConditionExpression>{esc_xml(str(link["linkConditionExpression"]))}</linkConditionExpression>')
         lines.append('\t</dataSetLink>')
 
 

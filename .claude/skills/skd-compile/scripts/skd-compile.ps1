@@ -1,4 +1,4 @@
-﻿# skd-compile v1.62 — Compile 1C DCS from JSON
+﻿# skd-compile v1.63 — Compile 1C DCS from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[string]$DefinitionFile,
@@ -1089,6 +1089,15 @@ function Emit-DataSetLinks {
 		X "`t`t<destinationExpression>$(Esc-Xml $dstEx)</destinationExpression>"
 		if ($link.parameter) {
 			X "`t`t<parameter>$(Esc-Xml "$($link.parameter)")</parameter>"
+		}
+		if ($link.PSObject.Properties.Match('parameterListAllowed').Count -gt 0 -and $link.parameterListAllowed) {
+			X "`t`t<parameterListAllowed>true</parameterListAllowed>"
+		}
+		if ($link.PSObject.Properties.Match('startExpression').Count -gt 0 -and $null -ne $link.startExpression) {
+			X "`t`t<startExpression>$(Esc-Xml "$($link.startExpression)")</startExpression>"
+		}
+		if ($link.PSObject.Properties.Match('linkConditionExpression').Count -gt 0 -and $null -ne $link.linkConditionExpression) {
+			X "`t`t<linkConditionExpression>$(Esc-Xml "$($link.linkConditionExpression)")</linkConditionExpression>"
 		}
 		X "`t</dataSetLink>"
 	}

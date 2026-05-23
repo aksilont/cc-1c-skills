@@ -1,4 +1,4 @@
-﻿# skd-decompile v0.46 — Decompile 1C DCS Template.xml to JSON DSL (draft)
+﻿# skd-decompile v0.47 — Decompile 1C DCS Template.xml to JSON DSL (draft)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -2114,6 +2114,27 @@ foreach ($dsNode in $dsNodes) {
 	$dsi++
 }
 
+# --- 5a-bis. dataSetLinks ---
+
+$dataSetLinks = @()
+$dslNodes = $root.SelectNodes("r:dataSetLink", $ns)
+foreach ($dslNode in $dslNodes) {
+	$link = [ordered]@{}
+	$link['sourceDataSet']         = Get-Text $dslNode.SelectSingleNode("r:sourceDataSet", $ns)
+	$link['destinationDataSet']    = Get-Text $dslNode.SelectSingleNode("r:destinationDataSet", $ns)
+	$link['sourceExpression']      = Get-Text $dslNode.SelectSingleNode("r:sourceExpression", $ns)
+	$link['destinationExpression'] = Get-Text $dslNode.SelectSingleNode("r:destinationExpression", $ns)
+	$pNode = $dslNode.SelectSingleNode("r:parameter", $ns)
+	if ($pNode) { $link['parameter'] = Get-Text $pNode }
+	$plaNode = $dslNode.SelectSingleNode("r:parameterListAllowed", $ns)
+	if ($plaNode -and ((Get-Text $plaNode) -eq 'true')) { $link['parameterListAllowed'] = $true }
+	$seNode = $dslNode.SelectSingleNode("r:startExpression", $ns)
+	if ($seNode) { $link['startExpression'] = Get-Text $seNode }
+	$lceNode = $dslNode.SelectSingleNode("r:linkConditionExpression", $ns)
+	if ($lceNode) { $link['linkConditionExpression'] = Get-Text $lceNode }
+	$dataSetLinks += $link
+}
+
 # --- 5b. calculatedFields ---
 
 $calculatedFields = @()
@@ -2182,6 +2203,7 @@ foreach ($p in $paramsRaw) {
 $out = [ordered]@{}
 if ($emitDataSources) { $out['dataSources'] = $dataSources }
 $out['dataSets'] = $dataSets
+if ($dataSetLinks.Count -gt 0) { $out['dataSetLinks'] = $dataSetLinks }
 if ($calculatedFields.Count -gt 0) { $out['calculatedFields'] = $calculatedFields }
 if ($totalFields.Count -gt 0)      { $out['totalFields'] = $totalFields }
 if ($parameters.Count -gt 0)       { $out['parameters'] = $parameters }
