@@ -1,4 +1,4 @@
-﻿# skd-decompile v0.68 — Decompile 1C DCS Template.xml to JSON DSL (draft)
+﻿# skd-decompile v0.69 — Decompile 1C DCS Template.xml to JSON DSL (draft)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -1807,6 +1807,8 @@ function Build-DataParameters {
 		$vDisplay = $null
 		$stdPeriodObj = $null
 		if ($vt -eq 'StandardPeriod') {
+			# Shape inference в compile: {variant, startDate, endDate} → SP с датами,
+			# {variant} only с SP-вариантом (ThisMonth/Custom/etc) → SP без дат.
 			$variant = Get-Text $valNode "v8:variant"
 			$sd = Get-Text $valNode "v8:startDate"
 			$ed = Get-Text $valNode "v8:endDate"
@@ -1817,13 +1819,22 @@ function Build-DataParameters {
 				if ($ed) { $stdPeriodObj['endDate'] = $ed }
 				$canAuto = $false
 			} elseif ($variant) {
-				# Для shorthand эмитим как строку "Period = ThisMonth"; для object form —
-				# объектом {variant: ThisMonth}, чтобы compile сгенерировал <v8:variant>
-				# вместо плоского <value xsi:type="v8:StandardPeriod">ThisMonth</value>.
 				$vDisplay = $variant
 				if ($vmN -or $uspN) {
 					$stdPeriodObj = [ordered]@{ variant = $variant }
 				}
+			}
+		} elseif ($vt -eq 'StandardBeginningDate') {
+			# Shape inference в compile: {variant, date} → SBD, либо variant начинается с BeginningOf*.
+			$variant = Get-Text $valNode "v8:variant"
+			$d = Get-Text $valNode "v8:date"
+			$hasExplicitDate = $d -and $d -ne '0001-01-01T00:00:00'
+			if ($hasExplicitDate) {
+				$stdPeriodObj = [ordered]@{ variant = $variant; date = $d }
+				$canAuto = $false
+			} elseif ($variant) {
+				$stdPeriodObj = [ordered]@{ variant = $variant }
+				$canAuto = $false
 			}
 		} elseif ($vt -eq 'DesignTimeValue') {
 			$vDisplay = $valNode.InnerText

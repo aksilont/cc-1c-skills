@@ -1,4 +1,4 @@
-﻿# skd-compile v1.85 — Compile 1C DCS from JSON
+﻿# skd-compile v1.86 — Compile 1C DCS from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[string]$DefinitionFile,
@@ -2585,26 +2585,51 @@ function Emit-DataParameters {
 		} elseif ($null -ne $dp.value) {
 			$vtype = "$($dp.valueType)"
 			if (($dp.value -is [PSCustomObject] -or $dp.value -is [hashtable]) -and ($dp.value.variant)) {
-				# StandardPeriod (PSCustomObject from JSON / hashtable from shorthand parser).
-				# Platform-pattern: startDate/endDate ТОЛЬКО для variant=Custom.
-				$_sd = $null; $_ed = $null
+				# Standard{Period,BeginningDate} — различаем по форме value:
+				#  {variant, date}         → SBD
+				#  {variant, startDate, endDate} → SP с датами
+				#  {variant} only          → инференс по имени (BeginningOf* → SBD, иначе SP)
+				$_hasDate = $false; $_hasSD = $false
 				if ($dp.value -is [PSCustomObject]) {
-					if ($dp.value.PSObject.Properties['startDate']) { $_sd = "$($dp.value.startDate)" }
-					if ($dp.value.PSObject.Properties['endDate'])   { $_ed = "$($dp.value.endDate)" }
+					$_hasDate = [bool]$dp.value.PSObject.Properties['date']
+					$_hasSD   = [bool]$dp.value.PSObject.Properties['startDate']
 				} else {
-					if ($dp.value.Contains('startDate')) { $_sd = "$($dp.value['startDate'])" }
-					if ($dp.value.Contains('endDate'))   { $_ed = "$($dp.value['endDate'])" }
+					$_hasDate = $dp.value.Contains('date')
+					$_hasSD   = $dp.value.Contains('startDate')
 				}
 				$_variantStr = "$($dp.value.variant)"
-				X "$indent`t`t<dcscor:value xsi:type=`"v8:StandardPeriod`">"
-				X "$indent`t`t`t<v8:variant xsi:type=`"v8:StandardPeriodVariant`">$(Esc-Xml $_variantStr)</v8:variant>"
-				if ($_variantStr -eq 'Custom') {
-					if (-not $_sd) { $_sd = '0001-01-01T00:00:00' }
-					if (-not $_ed) { $_ed = '0001-01-01T00:00:00' }
-					X "$indent`t`t`t<v8:startDate>$(Esc-Xml $_sd)</v8:startDate>"
-					X "$indent`t`t`t<v8:endDate>$(Esc-Xml $_ed)</v8:endDate>"
+				$_isSBD = $_hasDate -or (-not $_hasSD -and $_variantStr -like 'BeginningOf*')
+				if ($_isSBD) {
+					$_d = $null
+					if ($dp.value -is [PSCustomObject] -and $dp.value.PSObject.Properties['date']) { $_d = "$($dp.value.date)" }
+					elseif ($dp.value -is [System.Collections.IDictionary] -and $dp.value.Contains('date')) { $_d = "$($dp.value['date'])" }
+					X "$indent`t`t<dcscor:value xsi:type=`"v8:StandardBeginningDate`">"
+					X "$indent`t`t`t<v8:variant xsi:type=`"v8:StandardBeginningDateVariant`">$(Esc-Xml $_variantStr)</v8:variant>"
+					if ($_variantStr -eq 'Custom') {
+						if (-not $_d) { $_d = '0001-01-01T00:00:00' }
+						X "$indent`t`t`t<v8:date>$(Esc-Xml $_d)</v8:date>"
+					}
+					X "$indent`t`t</dcscor:value>"
+				} else {
+					# StandardPeriod — platform-pattern: startDate/endDate ТОЛЬКО для variant=Custom.
+					$_sd = $null; $_ed = $null
+					if ($dp.value -is [PSCustomObject]) {
+						if ($dp.value.PSObject.Properties['startDate']) { $_sd = "$($dp.value.startDate)" }
+						if ($dp.value.PSObject.Properties['endDate'])   { $_ed = "$($dp.value.endDate)" }
+					} else {
+						if ($dp.value.Contains('startDate')) { $_sd = "$($dp.value['startDate'])" }
+						if ($dp.value.Contains('endDate'))   { $_ed = "$($dp.value['endDate'])" }
+					}
+					X "$indent`t`t<dcscor:value xsi:type=`"v8:StandardPeriod`">"
+					X "$indent`t`t`t<v8:variant xsi:type=`"v8:StandardPeriodVariant`">$(Esc-Xml $_variantStr)</v8:variant>"
+					if ($_variantStr -eq 'Custom') {
+						if (-not $_sd) { $_sd = '0001-01-01T00:00:00' }
+						if (-not $_ed) { $_ed = '0001-01-01T00:00:00' }
+						X "$indent`t`t`t<v8:startDate>$(Esc-Xml $_sd)</v8:startDate>"
+						X "$indent`t`t`t<v8:endDate>$(Esc-Xml $_ed)</v8:endDate>"
+					}
+					X "$indent`t`t</dcscor:value>"
 				}
-				X "$indent`t`t</dcscor:value>"
 			} elseif ($vtype -match '^[a-zA-Z]+:') {
 				# Полный xsi:type из decompile (например "xs:boolean", "dcscor:DesignTimeValue").
 				$vStr = if ($dp.value -is [bool]) { "$($dp.value)".ToLower() } else { "$($dp.value)" }
