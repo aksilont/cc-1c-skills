@@ -1,4 +1,4 @@
-﻿# skd-decompile v0.54 — Decompile 1C DCS Template.xml to JSON DSL (draft)
+﻿# skd-decompile v0.55 — Decompile 1C DCS Template.xml to JSON DSL (draft)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -1639,6 +1639,11 @@ function Build-ConditionalAppearance {
 		if ($vmN) { $entry['viewMode'] = $vmN.InnerText }
 		$usid = Get-Text $it "dcsset:userSettingID"
 		if ($usid) { $entry['userSettingID'] = 'auto' }
+		$uspN = $it.SelectSingleNode("dcsset:userSettingPresentation", $ns)
+		if ($uspN) {
+			$usp = Get-MLText $uspN
+			if ($usp) { $entry['userSettingPresentation'] = $usp }
+		}
 		# use=false на самом condAppearance item
 		$useV = Get-Text $it "dcsset:use"
 		if ($useV -eq 'false') { $entry['use'] = $false }

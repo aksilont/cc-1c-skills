@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# skd-compile v1.70 — Compile 1C DCS from JSON
+# skd-compile v1.72 — Compile 1C DCS from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 import argparse
 import json
@@ -1931,6 +1931,9 @@ def emit_conditional_appearance(lines, items, indent, block_view_mode=None):
         if ca.get('userSettingID'):
             uid = new_uuid() if str(ca['userSettingID']) == 'auto' else str(ca['userSettingID'])
             lines.append(f'{indent}\t\t<dcsset:userSettingID>{esc_xml(uid)}</dcsset:userSettingID>')
+
+        if ca.get('userSettingPresentation'):
+            emit_mltext(lines, f'{indent}\t\t', 'dcsset:userSettingPresentation', ca['userSettingPresentation'])
 
         # useInXxx — список областей где правило НЕ применяется (DontUse)
         if ca.get('useInDontUse'):

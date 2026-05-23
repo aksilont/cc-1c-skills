@@ -1,4 +1,4 @@
-﻿# skd-compile v1.71 — Compile 1C DCS from JSON
+﻿# skd-compile v1.72 — Compile 1C DCS from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[string]$DefinitionFile,
@@ -2338,6 +2338,10 @@ function Emit-ConditionalAppearance {
 		if ($ca.userSettingID) {
 			$uid = if ("$($ca.userSettingID)" -eq "auto") { New-Guid-String } else { "$($ca.userSettingID)" }
 			X "$indent`t`t<dcsset:userSettingID>$(Esc-Xml $uid)</dcsset:userSettingID>"
+		}
+
+		if ($ca.userSettingPresentation) {
+			Emit-MLText -tag "dcsset:userSettingPresentation" -text $ca.userSettingPresentation -indent "$indent`t`t"
 		}
 
 		# useInXxx — список областей где правило НЕ применяется (DontUse).
