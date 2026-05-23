@@ -403,8 +403,9 @@ XML-маппинг — по `<group>` на каждый элемент:
 | `useRestriction` | `true` — скрыть от пользователя |
 | `use` | `"Always"`, `"Auto"` |
 | `denyIncompleteValues` | `true` — запретить произвольные значения (только из availableValues) |
-| `availableValues` | Массив `[{value, presentation}]` — допустимые значения с представлениями |
-| `inputParameters` | Параметры ввода (например `ФорматРедактирования`) — массив `[{parameter, value}]`, value может быть строкой, числом, bool или multilang dict |
+| `availableValues` | Массив `[{value, presentation}]` — допустимые значения с представлениями. Типы (bool/int/decimal) сохраняются нативно в JSON |
+| `inputParameters` | Параметры ввода (например `ФорматРедактирования`) — массив `[{parameter, value, valueType?, choiceParameters?, choiceParameterLinks?}]`. `valueType: {uri, name}` сохраняет кастомный xsi:type с локальным xmlns (например `d6p1:FoldersAndItemsUse`) |
+| `nilValue` | `true` — эмитить `<value xsi:nil="true"/>` для параметров с явным типом (decimal/string/dateTime), где XML-сериализатор обычно ставит типизированный default. Bit-perfect round-trip |
 
 ### availableValues
 
@@ -728,6 +729,34 @@ decompile эмитит длинные имена (`sourceDataSet` и т.д.); co
 
 Значение можно обернуть в `{ "value": ..., "use": false }` — отключённый параметр (платформа эмитит `<dcscor:use>false</dcscor:use>`). Такая же форма доступна в `appearance` items (см. раздел conditionalAppearance).
 
+#### Полная wrapper-форма (bit-perfect round-trip)
+
+Decompile сохраняет всю периферию каждого outputParameter в wrapper'е:
+
+```json
+{
+  "value": "Custom",
+  "valueType": "v8:StandardPeriod",        // полный xsi:type если не покрыт type-map'ом
+  "use": false,                            // <dcscor:use>false</dcscor:use>
+  "items": {                               // nested sub-параметры (ТипДиаграммы.ВидПодписей)
+    "ТипДиаграммы.ВидПодписей": { "value": "Value", "valueType": "v8ui:ChartLabelType" }
+  },
+  "viewMode": "Normal",                    // <dcsset:viewMode>Normal</dcsset:viewMode>
+  "userSettingID": "auto",
+  "userSettingPresentation": { "ru": "Тип" }
+}
+```
+
+Wrapper эмитится только при наличии extra-полей; простое `"key": "value"` остаётся как есть.
+
+#### Шрифт (v8ui:Font) в appearance
+
+Шрифт — объект с маркером `@type: "Font"`:
+```json
+"Шрифт": { "@type": "Font", "ref": "sys:DefaultGUIFont", "height": 10, "bold": "true", "italic": "false", "underline": "false", "strikeout": "false", "kind": "WindowsFont" }
+```
+Все атрибуты исходного XML сохраняются — для bit-perfect.
+
 ### dataParameters
 
 #### Автогенерация
@@ -765,10 +794,25 @@ decompile эмитит длинные имена (`sourceDataSet` и т.д.); co
 |------|----------|
 | `parameter` | Имя параметра |
 | `value` | Значение (объект `{ "variant": "LastMonth" }` для StandardPeriod, или скаляр) |
+| `valueType` | Полный xsi:type если кастомный (например `dcsset:DataCompositionGroupUseVariant`) |
 | `use` | Включён (`true` по умолчанию) |
 | `viewMode` | `"Normal"`, `"QuickAccess"`, `"Inaccessible"` |
 | `userSettingID` | `"auto"` → генерировать GUID |
 | `userSettingPresentation` | Отображаемое имя настройки (LocalStringType) |
+
+#### StandardPeriod / StandardBeginningDate — shape inference
+
+Compile различает варианты по форме `value`:
+
+| Форма | xsi:type | Когда |
+|---|---|---|
+| `{variant, startDate, endDate}` | `v8:StandardPeriod` | Custom с явными датами |
+| `{variant: "ThisMonth"}` (etc) | `v8:StandardPeriod` | без дат — non-Custom варианты SP |
+| `{variant, date}` | `v8:StandardBeginningDate` | Custom с явной датой |
+| `{variant: "BeginningOf*"}` | `v8:StandardBeginningDate` | без даты — variant'ы начинаются с `BeginningOf` |
+| `"2024-01-15T10:00:00"` (string) | `xs:dateTime` | raw datetime без обёртки |
+
+Platform-pattern: `startDate`/`endDate`/`date` эмитятся ТОЛЬКО для `variant=Custom`. Для `ThisMonth`/`LastYear`/`BeginningOfThisDay`/... — только `<v8:variant>`.
 
 ### structure
 
@@ -844,9 +888,11 @@ decompile эмитит длинные имена (`sourceDataSet` и т.д.); co
 }
 ```
 
-Каждая `column`/`row` принимает те же поля что и `group`: `name`, `groupBy`/`groupFields`, `filter`, `order`, `selection`, `outputParameters`, `conditionalAppearance`, `children` (вложенные `StructureItemGroup`), плюс user-settings — `viewMode`, `userSettingID`, `userSettingPresentation` (регистрация column/row как пункта «Изменить вариант»).
+Каждая `column`/`row` принимает те же поля что и `group`: `name`, `groupBy`/`groupFields`, `filter`, `order`, `selection`, `outputParameters`, `conditionalAppearance`, `children` (вложенные `StructureItemGroup`), плюс user-settings — `viewMode`, `userSettingID`, `userSettingPresentation`, `itemsViewMode` (регистрация column/row как пункта «Изменить вариант»).
 
-На самой `table` (отдельно от column/row) также допустимы `selection`, `conditionalAppearance`, `outputParameters` — общие настройки таблицы (заголовок, выводимые поля, форматирование).
+На самой `table` (отдельно от column/row) также допустимы `selection`, `conditionalAppearance`, `outputParameters`, плюс user-settings: `viewMode`, `userSettingID`, `userSettingPresentation`, `itemsViewMode` — общие настройки таблицы (заголовок, выводимые поля, форматирование).
+
+> **Внутренний паттерн**: `<dcsset:item xsi:type="dcsset:StructureItemGroup">` внутри `<dcsset:row>`/`<dcsset:column>`/`<dcsset:points>`/`<dcsset:series>` платформа всегда сериализует в **короткой форме** `<dcsset:item>` без `xsi:type`. Compile эмитит этот вариант автоматически для `children` table axis.
 
 #### Диаграмма (chart)
 
@@ -960,12 +1006,18 @@ Shorthand-флаги `@inaccessible`, `@quickAccess` доступны для `fi
   "orderViewMode":                  "Inaccessible",
   "conditionalAppearanceViewMode":  "Inaccessible",
   "itemsViewMode":                  "Inaccessible",
+  "selectionUserSettingID":              "auto",
+  "filterUserSettingID":                 "auto",
+  "orderUserSettingID":                  "auto",
+  "conditionalAppearanceUserSettingID":  "auto",
   "selection": [...],
   "filter":    [...]
 }
 ```
 
-`itemsViewMode` на settings — общий режим для всех подэлементов варианта (`<dcsset:itemsViewMode>` в XML).
+`itemsViewMode` на settings — общий режим для всех подэлементов варианта (`<dcsset:itemsViewMode>` в XML). `XxxUserSettingID` парят с `XxxViewMode` — platform пишет их в block-level пользовательских настроек. Пустые блоки (без items) тоже эмитятся, если есть block-level meta — например `<dcsset:conditionalAppearance><dcsset:viewMode>Normal</dcsset:viewMode></dcsset:conditionalAppearance>`.
+
+Также `orderViewMode`/`orderUserSettingID` поддержаны на StructureItemGroup для случаев когда block-level meta лежит на nested `<dcsset:order>`.
 
 **3. Structure item** — на элементе структуры (`group`):
 
