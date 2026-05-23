@@ -622,9 +622,9 @@ def check_structure_item(item_node, variant_name):
         return
 
     xsi_type = item_node.get(XSI_TYPE, "")
-    # StructureItemGroup — дефолтный тип, platform эмитит <dcsset:item> без xsi:type.
     if not xsi_type:
-        xsi_type = "dcsset:StructureItemGroup"
+        report_error(f"Variant '{variant_name}': structure item missing xsi:type")
+        return
     if xsi_type not in valid_structure_types:
         report_warn(f"Variant '{variant_name}': unusual structure item type '{xsi_type}'")
 
