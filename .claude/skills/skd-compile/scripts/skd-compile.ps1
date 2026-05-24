@@ -1,4 +1,4 @@
-﻿# skd-compile v1.93 — Compile 1C DCS from JSON
+﻿# skd-compile v1.94 — Compile 1C DCS from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[string]$DefinitionFile,
@@ -1628,6 +1628,13 @@ function Emit-ColorValue {
 function Emit-CellAppearance {
 	param($style, [double]$width = 0, [bool]$vMerge = $false, [bool]$hMerge = $false, [double]$minHeight = 0, $extraItems = @())
 	$ind = "`t`t`t`t`t`t"
+	# Если ничего внутри appearance не будет — не эмитим блок вовсе
+	# (оригинал платформы для cells без атрибутов не пишет <appearance></appearance>).
+	$hasContent = $style.bgColor -or $style.textColor -or $style.borders -or $style.font -or `
+		$style.hAlign -or $style.vAlign -or $style.wrap -or `
+		($width -gt 0) -or ($minHeight -gt 0) -or $vMerge -or $hMerge -or `
+		($extraItems -and @($extraItems).Count -gt 0)
+	if (-not $hasContent) { return }
 	X "`t`t`t`t`t<dcsat:appearance>"
 	# Background color
 	if ($style.bgColor) {

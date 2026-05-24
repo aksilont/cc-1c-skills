@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# skd-compile v1.93 — Compile 1C DCS from JSON
+# skd-compile v1.94 — Compile 1C DCS from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 import argparse
 import json
@@ -1336,6 +1336,16 @@ def _emit_color_value(lines, color, indent):
 
 def _emit_cell_appearance(lines, style, width=0, v_merge=False, h_merge=False, min_height=0, extra_items=None):
     ind = '\t\t\t\t\t\t'
+    # Если ничего внутри appearance не будет — не эмитим блок вовсе
+    # (оригинал платформы для cells без атрибутов не пишет <appearance></appearance>).
+    has_content = bool(
+        style.get('bgColor') or style.get('textColor') or style.get('borders') or
+        style.get('font') or style.get('hAlign') or style.get('vAlign') or style.get('wrap') or
+        (width > 0) or (min_height > 0) or v_merge or h_merge or
+        (extra_items and len(extra_items) > 0)
+    )
+    if not has_content:
+        return
     lines.append('\t\t\t\t\t<dcsat:appearance>')
     # Background color
     if style.get('bgColor'):
