@@ -1,4 +1,4 @@
-﻿# skd-decompile v0.69 — Decompile 1C DCS Template.xml to JSON DSL (draft)
+﻿# skd-decompile v0.70 — Decompile 1C DCS Template.xml to JSON DSL (draft)
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 param(
 	[Parameter(Mandatory)]
@@ -492,7 +492,18 @@ function Read-InputParameters {
 				foreach ($cpItem in $val.SelectNodes("dcscor:item", $ns)) {
 					$cpEntry = [ordered]@{ name = Get-Text $cpItem "dcscor:choiceParameter" }
 					$values = @()
-					foreach ($v in $cpItem.SelectNodes("dcscor:value", $ns)) { $values += $v.InnerText }
+					foreach ($v in $cpItem.SelectNodes("dcscor:value", $ns)) {
+						$vXsi = Get-LocalXsiType $v
+						$vTxt = $v.InnerText
+						if ($vXsi -eq 'boolean') {
+							$values += ($vTxt -eq 'true')
+						} elseif ($vXsi -eq 'decimal') {
+							if ($vTxt -match '^-?\d+$') { $values += [int]$vTxt }
+							else { $values += [double]$vTxt }
+						} else {
+							$values += $vTxt
+						}
+					}
 					$cpEntry['values'] = $values
 					$cp += $cpEntry
 				}

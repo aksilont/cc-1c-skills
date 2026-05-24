@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# skd-compile v1.86 — Compile 1C DCS from JSON
+# skd-compile v1.87 — Compile 1C DCS from JSON
 # Source: https://github.com/Nikolay-Shirokov/cc-1c-skills
 import argparse
 import json
@@ -586,7 +586,13 @@ def emit_input_parameters(lines, ip, indent):
                     lines.append(f'{indent}\t\t\t<dcscor:item>')
                     lines.append(f'{indent}\t\t\t\t<dcscor:choiceParameter>{esc_xml(str(cp.get("name", "")))}</dcscor:choiceParameter>')
                     for v in cp.get('values', []) or []:
-                        lines.append(f'{indent}\t\t\t\t<dcscor:value xsi:type="dcscor:DesignTimeValue">{esc_xml(str(v))}</dcscor:value>')
+                        if isinstance(v, bool):
+                            vs = 'true' if v else 'false'
+                            lines.append(f'{indent}\t\t\t\t<dcscor:value xsi:type="xs:boolean">{vs}</dcscor:value>')
+                        elif isinstance(v, (int, float)):
+                            lines.append(f'{indent}\t\t\t\t<dcscor:value xsi:type="xs:decimal">{v}</dcscor:value>')
+                        else:
+                            lines.append(f'{indent}\t\t\t\t<dcscor:value xsi:type="dcscor:DesignTimeValue">{esc_xml(str(v))}</dcscor:value>')
                     lines.append(f'{indent}\t\t\t</dcscor:item>')
                 lines.append(f'{indent}\t\t</dcscor:value>')
         elif 'choiceParameterLinks' in item:
